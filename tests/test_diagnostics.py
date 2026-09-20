@@ -14,7 +14,6 @@ from gitlab_groupsync.config import load_config
 from gitlab_groupsync.diagnostics import (
     DiagnosticCheck,
     DoctorReport,
-    doctor_as_dict,
     render_doctor,
     render_status,
     run_doctor,
@@ -114,9 +113,6 @@ def test_doctor_success_metadata_capabilities_and_custom_ca(
     assert "groups/1/wikis" in FakeDoctorClient.calls
     assert "projects/2/issues" in FakeDoctorClient.calls
     assert "secret" not in render_doctor(report)
-    structured = doctor_as_dict(report)
-    assert structured["healthy"] is True
-    assert structured["checks"][0]["name"] == "configuration"
 
 
 def test_doctor_metadata_fallback_and_absence_are_healthy(

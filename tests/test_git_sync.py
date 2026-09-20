@@ -52,12 +52,12 @@ def test_real_initial_incremental_noop_delete_rename_and_force_push(
     checkout = tmp_path / "content/repository"
 
     first = syncer.sync(checkout, str(remote), "main", "project:1:repository")
-    assert first.changed is True
+    assert first.revision == _run("rev-parse", "HEAD", cwd=work)
     assert (checkout / "kept.txt").read_text() == "one\n"
-    assert (
-        syncer.sync(checkout, str(remote), "main", "project:1:repository").changed
-        is False
-    )
+    first_mtime = (checkout / "kept.txt").stat().st_mtime_ns
+    unchanged = syncer.sync(checkout, str(remote), "main", "project:1:repository")
+    assert unchanged.revision == first.revision
+    assert (checkout / "kept.txt").stat().st_mtime_ns == first_mtime
 
     (work / "kept.txt").write_text("two\n")
     (work / "deleted.txt").unlink()
@@ -65,7 +65,7 @@ def test_real_initial_incremental_noop_delete_rename_and_force_push(
     _run("commit", "-m", "second", cwd=work)
     _run("push", cwd=work)
     changed = syncer.sync(checkout, str(remote), "main", "project:1:repository")
-    assert changed.changed is True
+    assert changed.revision == _run("rev-parse", "HEAD", cwd=work)
     assert (checkout / "kept.txt").read_text() == "two\n"
     assert not (checkout / "deleted.txt").exists()
 
@@ -283,10 +283,25 @@ def test_runner_timeout_kills_group_and_https_secret_is_redacted(
         )
 
     failed = tmp_path / "failed"
-    failed.write_text("#!/bin/sh\nexit 4\n")
+    failed.write_text(
+        "#!/bin/sh\n"
+        "printf 'server said %s\\n' \"$GL_GROUPSYNC_GIT_TOKEN\"\n"
+        "printf 'authentication rejected %s\\n' "
+        '"$GL_GROUPSYNC_GIT_TOKEN" >&2\n'
+        "exit 4\n"
+    )
     failed.chmod(0o700)
-    with pytest.raises(GitSyncError, match="failed"):
-        GitRunner(2, executable=str(failed)).run([])
+    with pytest.raises(GitSyncError) as failure:
+        GitRunner(2, executable=str(failed)).run(
+            ["-C", "/checkout", "fetch"],
+            token="top-secret",
+            resource_key="project:42:repository",
+        )
+    message = str(failure.value)
+    assert "top-secret" not in message
+    assert "project:42:repository: Git operation failed (fetch)" in message
+    assert "stdout: server said [REDACTED]" in message
+    assert "stderr: authentication rejected [REDACTED]" in message
     with pytest.raises(GitSyncError, match="execute"):
         GitRunner(2, executable=str(tmp_path / "missing")).run(["version"])
 

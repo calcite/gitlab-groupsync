@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from gitlab_groupsync.work_items import _atomic_write_text
+from gitlab_groupsync.state import atomic_write_text
 
 
 def search_guide_content() -> str:
@@ -60,4 +60,4 @@ metadata files can represent different completion points during a run.
 
 def write_search_guide(destination: str | Path) -> None:
     """Atomically publish the guide without rewriting unchanged bytes."""
-    _atomic_write_text(Path(destination) / "SEARCH_GUIDE.md", search_guide_content())
+    atomic_write_text(Path(destination) / "SEARCH_GUIDE.md", search_guide_content())

@@ -13,7 +13,6 @@ from click.testing import CliRunner
 from gitlab_groupsync import cli
 from gitlab_groupsync import config as config_module
 from gitlab_groupsync.config import ConfigurationError
-from gitlab_groupsync.gitlab_groupsync import hello
 
 
 @pytest.fixture
@@ -373,7 +372,3 @@ def test_template_writer_uses_one_manager(monkeypatch: pytest.MonkeyPatch) -> No
     config_module.write_config_template(output)
     assert output.getvalue() == "generated\n"
     assert len(managers) == 1
-
-
-def test_sample_greeting() -> None:
-    assert hello() == "Hello from GitLab Groupsync"

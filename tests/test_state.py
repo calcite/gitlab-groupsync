@@ -19,6 +19,7 @@ from gitlab_groupsync.state import (
     StateError,
     StateStore,
     atomic_write_json,
+    atomic_write_text,
     destination_is_locked,
     local_status,
     normalize_instance_url,
@@ -82,7 +83,7 @@ def test_schema_identity_managed_layout_and_all_transaction_models(
             project_id=20,
             iid=2,
             item_type="task",
-            web_url="https://gitlab.example/root/project/-/issues/2",
+            web_url="https://gitlab.example/root/project/-/work_items/2",
             content_path="content/2.md",
             raw_path=".sync/raw/2.json",
             source_updated_at="source-time",
@@ -352,10 +353,31 @@ def test_atomic_json_manifest_metadata_and_failures(
         atomic_write_json(tmp_path / "bad.json", {"bad": object()})
 
 
+def test_atomic_text_avoids_rewrites_and_preserves_target_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "item.md"
+    assert atomic_write_text(target, "original") is True
+    original_mtime = target.stat().st_mtime_ns
+    assert atomic_write_text(target, "original") is False
+    assert target.stat().st_mtime_ns == original_mtime
+
+    def fail_replace(source: str, destination: Path) -> None:
+        del destination
+        os.unlink(source)
+        raise OSError("replace failure")
+
+    monkeypatch.setattr(os, "replace", fail_replace)
+    with pytest.raises(AtomicWriteError, match="atomically publish text"):
+        atomic_write_text(target, "changed")
+    assert target.read_text() == "original"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 def test_schema_and_initialization_failures(tmp_path: Path) -> None:
     newer = tmp_path / "newer.sqlite3"
     connection = sqlite3.connect(newer)
-    connection.execute("PRAGMA user_version = 99")
+    connection.execute(f"PRAGMA user_version = {state.SCHEMA_VERSION + 1}")
     connection.close()
     with pytest.raises(StateError, match="newer"):
         StateStore(newer)
@@ -366,7 +388,7 @@ def test_schema_and_initialization_failures(tmp_path: Path) -> None:
     connection = sqlite3.connect(conflict)
     connection.execute("CREATE TABLE identity (value TEXT)")
     connection.close()
-    with pytest.raises(StateError, match="migrate"):
+    with pytest.raises(StateError, match="initialize"):
         StateStore(conflict)
 
     blocked = tmp_path / "blocked"
@@ -377,102 +399,72 @@ def test_schema_and_initialization_failures(tmp_path: Path) -> None:
         StateStore(tmp_path / "absent/state.sqlite3", read_only=True)
 
 
-def test_version_one_resource_schema_migrates_branch_column(tmp_path: Path) -> None:
-    database = tmp_path / "old.sqlite3"
-    connection = sqlite3.connect(database)
-    connection.execute(
-        """CREATE TABLE resources (
-        object_kind TEXT, object_id INTEGER, kind TEXT, status TEXT,
-        last_attempt_at TEXT, last_success_at TEXT, revision TEXT, last_error TEXT,
-        retained_content INTEGER, limitations_json TEXT,
-        PRIMARY KEY (object_kind, object_id, kind))"""
-    )
-    connection.execute("PRAGMA user_version = 1")
-    connection.close()
+def test_current_schema_reopens_without_initialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "state.sqlite3"
     with StateStore(database) as store:
-        assert store.schema_version == state.SCHEMA_VERSION
-        columns = {
-            row[1] for row in store._connection.execute("PRAGMA table_info(resources)")
+        store.bind_identity("https://gitlab.example", 1)
+
+    def unexpected_initialization(self: StateStore) -> None:
+        raise AssertionError("current schema must not be initialized again")
+
+    monkeypatch.setattr(StateStore, "_create_schema", unexpected_initialization)
+    with StateStore(database) as reopened:
+        assert reopened.schema_version == state.SCHEMA_VERSION
+        assert reopened.status_snapshot()["identity"] == {
+            "instance_url": "https://gitlab.example",
+            "root_group_id": 1,
         }
-        assert "branch" in columns
-        assert (
-            store._connection.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'work_items'"
-            ).fetchone()[0]
-            == 1
+
+
+def test_legacy_work_item_revision_is_hidden_counted_and_cleared(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://gitlab.example", 1
+    ) as store:
+        store.upsert_work_item(
+            global_id=101,
+            project_id=10,
+            iid=1,
+            item_type="issue",
+            web_url="https://gitlab.example/root/app/-/issues/1",
+            content_path="content/projects/root/app/work-items/1.md",
+            raw_path=".sync/raw/projects/10/work-items/101.json",
+            source_updated_at="source-time",
+            content_hash="hash",
+            status="ok",
+            last_attempt_at="attempt",
+            last_success_at="success",
         )
+        with store.transaction() as connection:
+            connection.execute(
+                """INSERT INTO resources VALUES
+                ('project', 10, 'work_items', 'ok', NULL, NULL, '12', NULL,
+                 NULL, 0, '[]')"""
+            )
 
-    broken = tmp_path / "broken-v1.sqlite3"
-    connection = sqlite3.connect(broken)
-    connection.execute("PRAGMA user_version = 1")
-    connection.close()
-    with pytest.raises(StateError, match="migrate"):
-        StateStore(broken)
+    status = local_status(destination)
+    detail = status["resource_details"][0]
+    assert detail["revision"] is None
+    assert detail["item_count"] == 1
+    write_manifest(destination, status)
+    manifest_detail = json.loads((destination / "manifest.json").read_text())[
+        "coverage"
+    ]["details"][0]
+    assert manifest_detail["revision"] is None
+    assert manifest_detail["item_count"] == 1
 
-    broken_v2 = tmp_path / "broken-v2.sqlite3"
-    connection = sqlite3.connect(broken_v2)
-    connection.execute("CREATE TABLE work_items (value TEXT)")
-    connection.execute("PRAGMA user_version = 2")
-    connection.close()
-    with pytest.raises(StateError, match="migrate"):
-        StateStore(broken_v2)
-
-
-def test_version_three_object_schema_migration_and_failure(tmp_path: Path) -> None:
-    database = tmp_path / "v3.sqlite3"
-    connection = sqlite3.connect(database)
-    connection.execute(
-        """CREATE TABLE objects (
-        kind TEXT, global_id INTEGER, full_path TEXT, observed_at TEXT,
-        missing_from_scope INTEGER, PRIMARY KEY (kind, global_id))"""
-    )
-    connection.execute(
-        """CREATE TABLE work_items (
-        global_id INTEGER PRIMARY KEY, project_id INTEGER, iid INTEGER,
-        item_type TEXT, web_url TEXT, content_path TEXT, raw_path TEXT,
-        source_updated_at TEXT, content_hash TEXT, status TEXT,
-        last_attempt_at TEXT, last_success_at TEXT, last_error TEXT,
-        missing_from_scope INTEGER, UNIQUE(project_id, iid))"""
-    )
-    connection.execute("PRAGMA user_version = 3")
-    connection.close()
-    with StateStore(database) as store:
-        columns = {
-            row[1] for row in store._connection.execute("PRAGMA table_info(objects)")
-        }
-        assert {"stale_path", "status_reason", "evidence_json"} <= columns
-
-    broken = tmp_path / "broken-v3.sqlite3"
-    connection = sqlite3.connect(broken)
-    connection.execute("CREATE TABLE objects (stale_path TEXT)")
-    connection.execute("PRAGMA user_version = 3")
-    connection.close()
-    with pytest.raises(StateError, match="migrate"):
-        StateStore(broken)
-
-    v4 = tmp_path / "v4.sqlite3"
-    connection = sqlite3.connect(v4)
-    connection.execute(
-        """CREATE TABLE work_items (
-        global_id INTEGER PRIMARY KEY, project_id INTEGER, iid INTEGER,
-        item_type TEXT, web_url TEXT, content_path TEXT, raw_path TEXT,
-        source_updated_at TEXT, content_hash TEXT, status TEXT,
-        last_attempt_at TEXT, last_success_at TEXT, last_error TEXT,
-        missing_from_scope INTEGER, UNIQUE(project_id, iid))"""
-    )
-    connection.execute("PRAGMA user_version = 4")
-    connection.close()
-    with StateStore(v4) as store:
-        indexes = store._connection.execute("PRAGMA index_list(work_items)").fetchall()
-        assert any(row[1] == "active_work_item_iid" and row[4] for row in indexes)
-
-    broken_v4 = tmp_path / "broken-v4.sqlite3"
-    connection = sqlite3.connect(broken_v4)
-    connection.execute("CREATE TABLE work_items (value TEXT)")
-    connection.execute("PRAGMA user_version = 4")
-    connection.close()
-    with pytest.raises(StateError, match="migrate"):
-        StateStore(broken_v4)
+    with StateStore(destination / ".sync/state.sqlite3") as store:
+        assert store.get_resource("project", 10, "work_items")["revision"] is None
+        store.upsert_resource(
+            "project", 10, "work_items", "ok", revision="another-stale-count"
+        )
+        resource = store.resources_for_object("project", 10)["work_items"]
+        assert resource["revision"] is None
+        assert resource["item_count"] == 1
 
 
 def test_url_normalization_nondefault_port() -> None:

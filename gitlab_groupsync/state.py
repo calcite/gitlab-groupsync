@@ -22,7 +22,7 @@ from gitlab_groupsync.path_safety import (
     contained_path,
 )
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 1
 MANAGED_DIRECTORIES = (
     "content",
     "stale",
@@ -158,7 +158,18 @@ class StateStore:
             self._connection.execute("PRAGMA foreign_keys = ON")
             if not read_only:
                 self._connection.execute("PRAGMA journal_mode = WAL")
-                self._migrate()
+                version = self.schema_version
+                if version > SCHEMA_VERSION:
+                    raise StateError(
+                        "destination state schema is newer than this application"
+                    )
+                if version == 0:
+                    self._create_schema()
+                self._connection.execute(
+                    "UPDATE resources SET revision = NULL "
+                    "WHERE kind = 'work_items' AND revision IS NOT NULL"
+                )
+                self._connection.commit()
             elif self.schema_version != SCHEMA_VERSION:
                 raise StateError("unsupported destination state schema")
         except sqlite3.Error as exc:
@@ -220,12 +231,7 @@ class StateStore:
             else:
                 self._connection.commit()
 
-    def _migrate(self) -> None:
-        version = self.schema_version
-        if version > SCHEMA_VERSION:
-            raise StateError("destination state schema is newer than this application")
-        if version == SCHEMA_VERSION:
-            return
+    def _create_schema(self) -> None:
         statements = (
             """CREATE TABLE identity (
                 singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -315,70 +321,6 @@ class StateStore:
                 missing_from_scope INTEGER NOT NULL DEFAULT 0
             )""",
         )
-        if version == 1:
-            try:
-                with self.transaction() as connection:
-                    connection.execute("ALTER TABLE resources ADD COLUMN branch TEXT")
-                    connection.execute("PRAGMA user_version = 2")
-            except sqlite3.Error as exc:
-                raise StateError("could not migrate destination state") from exc
-            version = 2
-        if version == 2:
-            try:
-                with self.transaction() as connection:
-                    connection.execute(statements[-1])
-                    connection.execute("PRAGMA user_version = 3")
-            except sqlite3.Error as exc:
-                raise StateError("could not migrate destination state") from exc
-            version = 3
-        if version == 3:
-            try:
-                with self.transaction() as connection:
-                    has_objects = connection.execute(
-                        "SELECT 1 FROM sqlite_master "
-                        "WHERE type='table' AND name='objects'"
-                    ).fetchone()
-                    if has_objects:
-                        connection.execute(
-                            "ALTER TABLE objects ADD COLUMN stale_path TEXT"
-                        )
-                        connection.execute(
-                            "ALTER TABLE objects ADD COLUMN status_reason TEXT"
-                        )
-                        connection.execute(
-                            "ALTER TABLE objects ADD COLUMN evidence_json "
-                            "TEXT NOT NULL DEFAULT '{}'"
-                        )
-                    connection.execute("PRAGMA user_version = 4")
-            except sqlite3.Error as exc:
-                raise StateError("could not migrate destination state") from exc
-            version = 4
-        if version == 4:
-            try:
-                with self.transaction() as connection:
-                    connection.execute(
-                        statements[-1].replace(
-                            "CREATE TABLE work_items", "CREATE TABLE work_items_v5"
-                        )
-                    )
-                    connection.execute(
-                        """INSERT INTO work_items_v5 SELECT
-                        global_id, project_id, iid, item_type, web_url, content_path,
-                        raw_path, source_updated_at, content_hash, status,
-                        last_attempt_at, last_success_at, last_error,
-                        missing_from_scope FROM work_items"""
-                    )
-                    connection.execute("DROP TABLE work_items")
-                    connection.execute("ALTER TABLE work_items_v5 RENAME TO work_items")
-                    connection.execute(
-                        """CREATE UNIQUE INDEX active_work_item_iid
-                        ON work_items(project_id, iid)
-                        WHERE missing_from_scope = 0"""
-                    )
-                    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            except sqlite3.Error as exc:
-                raise StateError("could not migrate destination state") from exc
-            return
         try:
             with self.transaction() as connection:
                 for statement in statements:
@@ -390,7 +332,7 @@ class StateStore:
                 )
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         except sqlite3.Error as exc:
-            raise StateError("could not migrate destination state") from exc
+            raise StateError("could not initialize destination state") from exc
 
     def bind_identity(self, instance_url: str, root_group_id: int) -> None:
         """Bind once, rejecting accidental destination reuse."""
@@ -493,6 +435,8 @@ class StateStore:
         retained_content: bool = False,
         limitations: tuple[str, ...] = (),
     ) -> None:
+        if kind == "work_items":
+            revision = None
         with self.transaction() as connection:
             connection.execute(
                 """INSERT INTO resources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -543,9 +487,16 @@ class StateStore:
         """Return public resource metadata keyed by component kind."""
         with self._mutex:
             rows = self._connection.execute(
-                """SELECT kind, status, last_attempt_at, last_success_at, revision,
-                branch, last_error, retained_content, limitations_json FROM resources
-                WHERE object_kind = ? AND object_id = ? ORDER BY kind""",
+                """SELECT r.kind, r.status, r.last_attempt_at, r.last_success_at,
+                CASE WHEN r.kind = 'work_items' THEN NULL ELSE r.revision END
+                    AS revision,
+                r.branch, r.last_error, r.retained_content, r.limitations_json,
+                CASE WHEN r.object_kind = 'project' AND r.kind = 'work_items'
+                    THEN (SELECT COUNT(*) FROM work_items AS wi
+                          WHERE wi.project_id = r.object_id)
+                    ELSE NULL END AS item_count
+                FROM resources AS r
+                WHERE r.object_kind = ? AND r.object_id = ? ORDER BY r.kind""",
                 (object_kind, object_id),
             ).fetchall()
         return {
@@ -554,6 +505,7 @@ class StateStore:
                 "last_attempt_at": row["last_attempt_at"],
                 "last_success_at": row["last_success_at"],
                 "revision": row["revision"],
+                "item_count": row["item_count"],
                 "branch": row["branch"],
                 "last_error": row["last_error"],
                 "retained_content": bool(row["retained_content"]),
@@ -836,10 +788,17 @@ class StateStore:
                 GROUP BY status ORDER BY status"""
             ).fetchall()
             detail_rows = self._connection.execute(
-                """SELECT object_kind, object_id, kind, status, last_attempt_at,
-                last_success_at, revision, branch, last_error, retained_content,
-                limitations_json FROM resources
-                ORDER BY object_kind, object_id, kind"""
+                """SELECT r.object_kind, r.object_id, r.kind, r.status,
+                r.last_attempt_at, r.last_success_at,
+                CASE WHEN r.kind = 'work_items' THEN NULL ELSE r.revision END
+                    AS revision,
+                r.branch, r.last_error, r.retained_content, r.limitations_json,
+                CASE WHEN r.object_kind = 'project' AND r.kind = 'work_items'
+                    THEN (SELECT COUNT(*) FROM work_items AS wi
+                          WHERE wi.project_id = r.object_id)
+                    ELSE NULL END AS item_count
+                FROM resources AS r
+                ORDER BY r.object_kind, r.object_id, r.kind"""
             ).fetchall()
             freshness = self._connection.execute(
                 """SELECT MAX(last_attempt_at) AS last_attempt_at,
@@ -866,6 +825,7 @@ class StateStore:
                 "last_attempt_at": row["last_attempt_at"],
                 "last_success_at": row["last_success_at"],
                 "revision": row["revision"],
+                "item_count": row["item_count"],
                 "branch": row["branch"],
                 "last_error": row["last_error"],
                 "retained_content": bool(row["retained_content"]),
@@ -954,6 +914,49 @@ def atomic_write_json(path: str | Path, value: Mapping[str, Any]) -> None:
                 os.unlink(temporary)
             except FileNotFoundError:
                 pass
+
+
+def atomic_write_text(path: str | Path, content: str) -> bool:
+    """Flush and atomically replace text, avoiding unchanged rewrites."""
+    target = Path(path)
+    encoded = content.encode("utf-8")
+    try:
+        if target.read_bytes() == encoded:
+            return False
+    except FileNotFoundError:
+        pass
+    temporary: str | None = None
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as output:
+            temporary = output.name
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, target)
+        temporary = None
+        directory_fd = os.open(
+            target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError as exc:
+        raise AtomicWriteError("could not atomically publish text") from exc
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+    return True
 
 
 def write_manifest(destination: str | Path, status: Mapping[str, Any]) -> None:

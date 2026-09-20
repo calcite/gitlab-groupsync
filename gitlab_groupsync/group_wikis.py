@@ -71,7 +71,8 @@ class GroupWikiExporter:
         store: StateStore,
         destination: Path,
         base_url: str,
-        lifecycle: "LifecycleReconciler | None" = None,
+        *,
+        lifecycle: "LifecycleReconciler",
     ) -> None:
         self.client = client
         self.store = store
@@ -84,7 +85,7 @@ class GroupWikiExporter:
     ) -> GroupWikiSyncResult:
         """Fetch and publish one selected group without affecting any sibling."""
         attempted = utc_now()
-        recovery_failures = self._recover(group_id)
+        recovery_failures = self.recover(group_id)
         try:
             result = self.client.group_wiki_pages(group_id)
         except DiscoveryError as exc:
@@ -107,16 +108,13 @@ class GroupWikiExporter:
         assert result.pages is not None
         if not result.pages:
             try:
-                if self.lifecycle is None:
-                    self._remove_active(base / "wiki", group_id)
-                else:
-                    self.lifecycle.retire_component(
-                        "group",
-                        group_id,
-                        full_path,
-                        "wiki",
-                        "conclusively_empty_upstream",
-                    )
+                self.lifecycle.retire_component(
+                    "group",
+                    group_id,
+                    full_path,
+                    "wiki",
+                    "conclusively_empty_upstream",
+                )
                 snapshot, _ = self._snapshot(group_id, full_path, ())
                 raw_path = (
                     self.destination / ".sync/raw/groups" / str(group_id) / "wiki.json"
@@ -309,7 +307,8 @@ class GroupWikiExporter:
         self.store.update_recovery(recovery_id, "complete")
         shutil.rmtree(staged.parent, ignore_errors=True)
 
-    def _recover(self, group_id: int) -> int:
+    def recover(self, group_id: int) -> int:
+        """Complete or abandon interrupted publications for one group."""
         failures = 0
         for record in self.store.pending_recoveries(
             "group_wiki_publication", "group", group_id
@@ -362,17 +361,6 @@ class GroupWikiExporter:
             "object_id": group_id,
             "resource": "wiki",
         }
-
-    def _remove_active(self, active: Path, group_id: int) -> None:
-        if not active.exists():
-            return
-        if not self._valid_tree(active, group_id):
-            raise PathSafetyError("destination collides with unmanaged group wiki")
-        retired = self.destination / ".sync/staging" / f"empty-group-wiki-{group_id}"
-        if retired.exists():
-            shutil.rmtree(retired)
-        os.replace(active, retired)
-        shutil.rmtree(retired)
 
     @staticmethod
     def _write_json_if_changed(path: Path, value: Mapping[str, Any]) -> None:

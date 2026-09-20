@@ -5,6 +5,7 @@
   "resources": {
     "repository": {
       "branch": "main",
+      "item_count": null,
       "last_attempt_at": "2026-09-20T10:00:00+00:00",
       "last_error": null,
       "last_success_at": "2026-09-20T10:00:00+00:00",
@@ -17,6 +18,7 @@
     },
     "wiki": {
       "branch": "wiki-main",
+      "item_count": null,
       "last_attempt_at": "2026-09-20T10:00:00+00:00",
       "last_error": null,
       "last_success_at": "2026-09-20T10:00:00+00:00",
@@ -29,6 +31,7 @@
     },
     "work_items": {
       "branch": null,
+      "item_count": 2,
       "last_attempt_at": "2026-09-20T10:00:00+00:00",
       "last_error": null,
       "last_success_at": "2026-09-20T10:00:00+00:00",
@@ -36,7 +39,7 @@
         "fixture-only REST issue/task coverage; not live-tested"
       ],
       "retained_content": false,
-      "revision": "2",
+      "revision": null,
       "status": "ok"
     }
   }

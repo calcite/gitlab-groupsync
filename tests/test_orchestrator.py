@@ -12,6 +12,7 @@ import pytest
 from gitlab_groupsync import orchestrator
 from gitlab_groupsync.git_sync import (
     GitResourceResult,
+    GitRunner,
     GitSyncError,
     LocalConflictError,
 )
@@ -131,7 +132,14 @@ class FakeGit:
         self.failures = failures or {}
         self.calls: list[tuple[str, str | None]] = []
 
-    def remote_head(self, remote: str, *, token: str | None = None):
+    def remote_head(
+        self,
+        remote: str,
+        *,
+        token: str | None = None,
+        resource_key: str | None = None,
+    ):
+        del resource_key
         self.calls.append(("head", token))
         failure = self.failures.get("head")
         if failure:
@@ -153,7 +161,7 @@ class FakeGit:
         failure = self.failures.get(kind)
         if failure:
             raise failure
-        return GitResourceResult("ok", f"{kind}-revision", branch, True)
+        return GitResourceResult("ok", f"{kind}-revision", branch)
 
 
 def _details(
@@ -208,6 +216,62 @@ def test_drift_success_manifest_metadata_and_independent_wiki_failure(
     assert (destination / "SEARCH_GUIDE.md").is_file()
     assert ("repository", "secret") in git.calls
     assert ("wiki", "secret") in git.calls
+
+
+def test_git_failure_persists_actionable_redacted_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "corpus"
+    config = _config(
+        destination, [_selection(10, "root/app", repository=True, wiki=False)]
+    )
+    monkeypatch.setattr(
+        orchestrator, "discover_inventory", lambda *a, **k: _inventory((10, "root/app"))
+    )
+    client = FakeClient({10: _details(10, "root/app")}, {})
+    failed = tmp_path / "failed-git"
+    failed.write_text(
+        "#!/bin/sh\n"
+        "printf 'remote rejected %s\\n' \"$GL_GROUPSYNC_GIT_TOKEN\" >&2\n"
+        "exit 1\n"
+    )
+    failed.chmod(0o700)
+
+    class FailedGit:
+        def sync(
+            self,
+            checkout: Path,
+            remote: str,
+            branch: str,
+            resource_key: str,
+            *,
+            token: str | None = None,
+        ) -> GitResourceResult:
+            del remote, branch
+            GitRunner(2, executable=str(failed)).run(
+                ["-C", str(checkout), "fetch"],
+                token=token,
+                resource_key=resource_key,
+            )
+            raise AssertionError("failed command returned")
+
+    assert (
+        SyncOrchestrator(
+            config,
+            "operator-secret",
+            client_factory=lambda *a, **k: client,  # type: ignore[arg-type]
+            git=FailedGit(),  # type: ignore[arg-type]
+        ).run()
+        == 1
+    )
+    with StateStore(destination / ".sync/state.sqlite3", read_only=True) as store:
+        last_error = store.get_resource("project", 10, "repository")["last_error"]
+    assert "operator-secret" not in last_error
+    assert "project:10:repository: Git operation failed (fetch)" in last_error
+    assert "stderr: remote rejected [REDACTED]" in last_error
+    manifest = (destination / "manifest.json").read_text()
+    assert "operator-secret" not in manifest
+    assert "remote rejected [REDACTED]" in manifest
 
 
 def test_empty_disabled_inaccessible_transient_and_local_conflict_states(
@@ -488,8 +552,14 @@ def test_additional_resource_outcomes_retention_and_path_collision(
     )
 
     class EmptyHeadGit(FakeGit):
-        def remote_head(self, remote: str, *, token: str | None = None):
-            del remote, token
+        def remote_head(
+            self,
+            remote: str,
+            *,
+            token: str | None = None,
+            resource_key: str | None = None,
+        ):
+            del remote, token, resource_key
             return None
 
     no_head_config = _config(tmp_path / "no-head", [selection])
@@ -638,7 +708,7 @@ def test_work_items_are_selected_independently_and_receive_full_mode(
             calls.append((*args, kwargs))
             return WorkItemSyncResult("ok", 2, 0, True, ("limited",))
 
-        def _recover_publications(self, project_id: int) -> int:
+        def recover(self, project_id: int) -> int:
             calls.append(("recover", project_id))
             return 0
 
@@ -790,7 +860,16 @@ def test_project_rename_forces_complete_work_item_refresh_and_updates_paths(
         (destination / "content/groups/renamed-root/group.json").read_text()
     )
     assert project_metadata["full_path"] == "renamed-root/app"
+    assert project_metadata["resources"]["work_items"]["revision"] is None
+    assert project_metadata["resources"]["work_items"]["item_count"] == 2
     assert group_metadata["full_path"] == "renamed-root"
+    manifest = json.loads((destination / "manifest.json").read_text())
+    work_items = next(
+        detail
+        for detail in manifest["coverage"]["details"]
+        if detail["kind"] == "work_items"
+    )
+    assert work_items["revision"] is None and work_items["item_count"] == 2
     with StateStore(destination / ".sync/state.sqlite3") as store:
         item = store.work_item(10, 1)
         assert item["content_path"] == str(item_path)
@@ -816,7 +895,7 @@ def test_work_item_failure_and_path_failure_are_partial_but_do_not_block_reposit
         def sync_project(self, *args: Any, **kwargs: Any) -> WorkItemSyncResult:
             return WorkItemSyncResult("error", 0, 1, True, ())
 
-        def _recover_publications(self, project_id: int) -> int:
+        def recover(self, project_id: int) -> int:
             return 0
 
     monkeypatch.setattr(orchestrator, "WorkItemExporter", FailedExporter)

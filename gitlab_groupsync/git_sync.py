@@ -46,8 +46,6 @@ class GitResourceResult:
     status: str
     revision: str | None = None
     branch: str | None = None
-    changed: bool = False
-    error: str | None = None
 
 
 class GitRunner:
@@ -70,6 +68,7 @@ class GitRunner:
         *,
         cwd: Path | None = None,
         token: str | None = None,
+        resource_key: str | None = None,
     ) -> GitOutput:
         if token and any(token in value for value in args):
             raise GitSyncError("refusing token-bearing Git arguments")
@@ -127,13 +126,28 @@ class GitRunner:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.communicate()
                 raise GitSyncError("Git operation timed out") from None
-            if process.returncode != 0:
-                raise GitSyncError(
-                    f"Git operation failed ({args[0] if args else 'command'})"
-                )
             if token:
                 stdout = stdout.replace(token, "[REDACTED]")
                 stderr = stderr.replace(token, "[REDACTED]")
+            if process.returncode != 0:
+                operation = (
+                    args[2]
+                    if len(args) > 2 and args[0] == "-C"
+                    else args[0]
+                    if args
+                    else "command"
+                )
+                message = f"Git operation failed ({operation})"
+                if resource_key:
+                    message = f"{resource_key}: {message}"
+                details = []
+                if stdout.strip():
+                    details.append(f"stdout: {stdout.strip()}")
+                if stderr.strip():
+                    details.append(f"stderr: {stderr.strip()}")
+                if details:
+                    message = f"{message}\n" + "\n".join(details)
+                raise GitSyncError(message)
             return GitOutput(stdout, stderr)
         except OSError as exc:
             raise GitSyncError("could not execute Git") from exc
@@ -222,12 +236,14 @@ class GitResourceSynchronizer:
                     "status",
                     "--porcelain",
                     "--untracked-files=all",
-                ]
+                ],
+                resource_key=resource_key,
             )
             if status.stdout:
                 raise LocalConflictError("local tracked or untracked changes detected")
             self.runner.run(
-                ["-C", str(destination), "remote", "set-url", "origin", remote]
+                ["-C", str(destination), "remote", "set-url", "origin", remote],
+                resource_key=resource_key,
             )
             self.runner.run(
                 [
@@ -240,13 +256,15 @@ class GitResourceSynchronizer:
                     f"+refs/heads/{branch}:refs/remotes/origin/gl-groupsync",
                 ],
                 token=token,
+                resource_key=resource_key,
             )
-            revision = self._revision(destination)
+            revision = self._revision(destination, resource_key)
             current = self.runner.run(
-                ["-C", str(destination), "rev-parse", "--verify", "HEAD"]
+                ["-C", str(destination), "rev-parse", "--verify", "HEAD"],
+                resource_key=resource_key,
             )
             if current.stdout.strip() == revision:
-                return GitResourceResult("ok", revision, branch, False)
+                return GitResourceResult("ok", revision, branch)
             try:
                 self.runner.run(
                     [
@@ -256,20 +274,25 @@ class GitResourceSynchronizer:
                         "--detach",
                         "--force",
                         revision,
-                    ]
+                    ],
+                    resource_key=resource_key,
                 )
-            except GitSyncError:
+            except GitSyncError as exc:
                 raise GitSyncError(
-                    "Git checkout failed; resource may be inconsistent"
+                    f"{resource_key}: Git checkout failed; resource may be "
+                    f"inconsistent: {exc}"
                 ) from None
-            return GitResourceResult("ok", revision, branch, True)
+            return GitResourceResult("ok", revision, branch)
 
         self.staging_root.mkdir(parents=True, exist_ok=True)
         assert_no_symlinks(self.staging_root)
         staging = Path(tempfile.mkdtemp(prefix="git-", dir=self.staging_root))
         try:
-            self.runner.run(["init", str(staging)])
-            self.runner.run(["-C", str(staging), "remote", "add", "origin", remote])
+            self.runner.run(["init", str(staging)], resource_key=resource_key)
+            self.runner.run(
+                ["-C", str(staging), "remote", "add", "origin", remote],
+                resource_key=resource_key,
+            )
             self.runner.run(
                 [
                     "-C",
@@ -281,9 +304,13 @@ class GitResourceSynchronizer:
                     f"+refs/heads/{branch}:refs/remotes/origin/gl-groupsync",
                 ],
                 token=token,
+                resource_key=resource_key,
             )
-            revision = self._revision(staging)
-            self.runner.run(["-C", str(staging), "checkout", "--detach", revision])
+            revision = self._revision(staging, resource_key)
+            self.runner.run(
+                ["-C", str(staging), "checkout", "--detach", revision],
+                resource_key=resource_key,
+            )
             marker = staging / ".git" / "gitlab-groupsync"
             with marker.open("w", encoding="utf-8") as output:
                 output.write(marker_value)
@@ -295,18 +322,26 @@ class GitResourceSynchronizer:
                 raise PathSafetyError("resource appeared during staged publication")
             os.replace(staging, destination)
             fsync_directories((destination.parent,))
-            return GitResourceResult("ok", revision, branch, True)
+            return GitResourceResult("ok", revision, branch)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
     def remote_head(
-        self, remote: str, *, token: str | None = None
+        self,
+        remote: str,
+        *,
+        token: str | None = None,
+        resource_key: str | None = None,
     ) -> tuple[str, str] | None:
         """Resolve a remote's own HEAD branch and commit, or confirm it is empty."""
         remote = credential_free_remote(remote)
         if token and token in remote:
             raise GitSyncError("refusing a token-bearing Git remote")
-        output = self.runner.run(["ls-remote", "--symref", remote, "HEAD"], token=token)
+        output = self.runner.run(
+            ["ls-remote", "--symref", remote, "HEAD"],
+            token=token,
+            resource_key=resource_key,
+        )
         if not output.stdout.strip():
             return None
         branch: str | None = None
@@ -320,7 +355,8 @@ class GitResourceSynchronizer:
             raise GitSyncError("could not determine remote default branch")
         return branch, revision
 
-    def _revision(self, checkout: Path) -> str:
+    def _revision(self, checkout: Path, resource_key: str) -> str:
         return self.runner.run(
-            ["-C", str(checkout), "rev-parse", "refs/remotes/origin/gl-groupsync"]
+            ["-C", str(checkout), "rev-parse", "refs/remotes/origin/gl-groupsync"],
+            resource_key=resource_key,
         ).stdout.strip()

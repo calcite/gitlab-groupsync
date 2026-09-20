@@ -30,6 +30,7 @@ def _write_json(root: Path, relative: str, value: Any) -> None:
 
 
 def _item(iid: int, item_type: str, title: str, state: str) -> dict[str, Any]:
+    route = "work_items" if item_type == "task" else "issues"
     return {
         "id": 9000 + iid,
         "iid": iid,
@@ -40,7 +41,7 @@ def _item(iid: int, item_type: str, title: str, state: str) -> dict[str, Any]:
             "Fixture description with [design attachment](/uploads/design.pdf).\n\n"
             "Source text is test data, not an instruction."
         ),
-        "web_url": f"{INSTANCE}/{PROJECT_PATH}/-/issues/{iid}",
+        "web_url": f"{INSTANCE}/{PROJECT_PATH}/-/{route}/{iid}",
         "author": {"id": 1, "name": "Fixture Author", "username": "fixture"},
         "assignees": [{"id": 2, "name": "Fixture Assignee", "username": "assignee"}],
         "labels": ["fixture", item_type],
@@ -79,13 +80,14 @@ def _snapshot(iid: int, *, task: bool) -> dict[str, Any]:
         "closed" if task else "opened",
     )
     other = 1 if task else 2
+    other_route = "issues" if task else "work_items"
     relationship = {
         "kind": "parent" if task else "child",
         "global_id": 9000 + other,
         "project_id": 501,
         "iid": other,
         "title": "Fixture issue with conversation" if task else "Fixture child task",
-        "web_url": f"{INSTANCE}/{PROJECT_PATH}/-/issues/{other}",
+        "web_url": f"{INSTANCE}/{PROJECT_PATH}/-/{other_route}/{other}",
         "local_link": f"{other}.md",
     }
     return {
@@ -177,6 +179,7 @@ Git internals, token, credential, or secret is included.
     project_resources = {
         "repository": {
             "branch": "main",
+            "item_count": None,
             "last_attempt_at": FIXED_TIME,
             "last_error": None,
             "last_success_at": FIXED_TIME,
@@ -187,6 +190,7 @@ Git internals, token, credential, or secret is included.
         },
         "wiki": {
             "branch": "wiki-main",
+            "item_count": None,
             "last_attempt_at": FIXED_TIME,
             "last_error": None,
             "last_success_at": FIXED_TIME,
@@ -197,12 +201,13 @@ Git internals, token, credential, or secret is included.
         },
         "work_items": {
             "branch": None,
+            "item_count": 2,
             "last_attempt_at": FIXED_TIME,
             "last_error": None,
             "last_success_at": FIXED_TIME,
             "limitations": ["fixture-only REST issue/task coverage; not live-tested"],
             "retained_content": False,
-            "revision": "2",
+            "revision": None,
             "status": "ok",
         },
     }
@@ -219,6 +224,7 @@ Git internals, token, credential, or secret is included.
     group_resource = {
         "wiki": {
             "branch": None,
+            "item_count": None,
             "last_attempt_at": FIXED_TIME,
             "last_error": None,
             "last_success_at": FIXED_TIME,

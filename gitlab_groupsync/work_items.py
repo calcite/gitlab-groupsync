@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import re
-import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -17,7 +16,13 @@ from gitlab_groupsync.path_safety import (
     contained_path,
     fsync_directories,
 )
-from gitlab_groupsync.state import StateError, StateStore, atomic_write_json, utc_now
+from gitlab_groupsync.state import (
+    StateError,
+    StateStore,
+    atomic_write_json,
+    atomic_write_text,
+    utc_now,
+)
 
 _UPLOAD_LINK = re.compile(
     r"(?P<prefix>!?\[[^\]]*\]\()(?P<url><?/?uploads/[^\s)>]+>?)(?P<suffix>[^)]*\))"
@@ -282,41 +287,6 @@ def render_work_item(snapshot: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _atomic_write_text(path: Path, content: str) -> bool:
-    encoded = content.encode("utf-8")
-    try:
-        if path.read_bytes() == encoded:
-            return False
-    except FileNotFoundError:
-        pass
-    temporary: str | None = None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="wb",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as output:
-            temporary = output.name
-            output.write(encoded)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-        temporary = None
-        fsync_directories((path.parent,))
-    except OSError as exc:
-        raise StateError("could not atomically publish work-item Markdown") from exc
-    finally:
-        if temporary is not None:
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
-    return True
-
-
 class WorkItemExporter:
     """Synchronize one selected project's issue/task current state."""
 
@@ -347,7 +317,7 @@ class WorkItemExporter:
         run_started_at: str,
     ) -> WorkItemSyncResult:
         scope = f"project:{project_id}:work-items"
-        recovery_failures = self._recover_publications(project_id)
+        recovery_failures = self.recover(project_id)
         checkpoint = self.store.get_checkpoint(scope, "incremental")
         last_full = self.store.get_checkpoint(scope, "full_success")
         full = force_full or checkpoint is None or self._full_due(last_full)
@@ -451,7 +421,6 @@ class WorkItemExporter:
             last_success_at=run_started_at
             if failures == 0
             else previous.get("last_success_at"),
-            revision=str(len(self.store.work_items_for_project(project_id))),
             last_error=last_error,
             retained_content=failures > 0 and bool(previous.get("last_success_at")),
             limitations=_LIMITATIONS,
@@ -561,7 +530,7 @@ class WorkItemExporter:
             details=details,
         )
         self._write_raw_if_changed(raw_path, snapshot, raw_bytes)
-        _atomic_write_text(content_path, markdown)
+        atomic_write_text(content_path, markdown)
         self._commit_publication(project_id, details)
         self.store.update_recovery(recovery_id, "complete")
 
@@ -593,7 +562,8 @@ class WorkItemExporter:
             last_success_at=timestamp,
         )
 
-    def _recover_publications(self, project_id: int) -> int:
+    def recover(self, project_id: int) -> int:
+        """Complete or abandon interrupted publications for one project."""
         failures = 0
         for record in self.store.pending_recoveries(
             "work_item_publication", "project", project_id
@@ -624,7 +594,7 @@ class WorkItemExporter:
                     != details["content_hash"]
                 ):
                     raise StateError("recovered work-item content hash differs")
-                _atomic_write_text(content_path, markdown)
+                atomic_write_text(content_path, markdown)
                 self._commit_publication(project_id, details)
                 self.store.update_recovery(record["id"], "complete")
             except (OSError, ValueError, StateError, KeyError, TypeError):

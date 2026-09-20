@@ -415,9 +415,18 @@ def test_work_item_rest_endpoints_and_graphql_hierarchy_pagination() -> None:
         if path.endswith("/issues"):
             item_type = params["issue_type"]
             item_id = 1 if item_type == "issue" else 2
-            values = (
-                [{"id": item_id}, {"id": 1}] if item_type == "task" else [{"id": 1}]
-            )
+            route = "issues" if item_type == "issue" else "work_items"
+            record = {
+                "id": item_id,
+                "iid": item_id,
+                "issue_type": item_type,
+                "title": f"{item_type.title()} {item_id}",
+                "state": "opened",
+                "description": "fixture",
+                "web_url": f"https://git.example/root/app/-/{route}/{item_id}",
+                "updated_at": "2026-09-20T00:00:00Z",
+            }
+            values = [record, dict(record)] if item_type == "task" else [record]
             return httpx.Response(200, json=values)
         if path.endswith("/discussions"):
             return httpx.Response(200, json=[{"id": "discussion"}])
@@ -426,10 +435,13 @@ def test_work_item_rest_endpoints_and_graphql_hierarchy_pagination() -> None:
         return httpx.Response(200, json={"id": 1})
 
     client = _mock_client(handler)
+    items = list(client.iter_project_work_items(10, updated_after="then"))
     assert [
-        value["id"]
-        for value in client.iter_project_work_items(10, updated_after="then")
-    ] == [1, 2]
+        (value["issue_type"], value["web_url"].split("/-/")[1]) for value in items
+    ] == [
+        ("issue", "issues/1"),
+        ("task", "work_items/2"),
+    ]
     assert client.issue_discussions(10, 1) == ({"id": "discussion"},)
     assert client.issue_links(10, 1) == ({"id": 2},)
     assert client.project_issue(10, 1) == {"id": 1}

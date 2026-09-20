@@ -85,6 +85,8 @@ def test_checked_in_sample_matches_generator_and_contains_required_evidence(
     assert "System Activity" in all_text
     assert "## Provenance" in all_text
     assert "[local](2.md)" in all_text
+    assert "/-/issues/1" in all_text
+    assert "/-/work_items/2" in all_text
     assert "state.sqlite3" not in {path.name for path in paths}
     assert not any(".git" in path.parts for path in paths)
     assert "PRIVATE-TOKEN" not in all_text

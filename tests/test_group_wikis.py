@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +38,21 @@ class FakeGroupWikiClient:
 
 
 def _exporter(client: Any, store: StateStore, destination: Path) -> GroupWikiExporter:
-    return GroupWikiExporter(client, store, destination, "https://git.example/base")
+    return GroupWikiExporter(
+        client,
+        store,
+        destination,
+        "https://git.example/base",
+        lifecycle=LifecycleReconciler(destination, store),
+    )
+
+
+def _managed_wiki_tree(path: Path, content: str = "x") -> None:
+    path.mkdir(parents=True)
+    (path / ".gitlab-groupsync.json").write_text(
+        json.dumps({"object_kind": "group", "object_id": 1, "resource": "wiki"})
+    )
+    (path / "home.md").write_text(content)
 
 
 def test_complete_formats_nested_slugs_raw_sidecars_and_deterministic_noop(
@@ -128,13 +141,24 @@ def test_confirmed_empty_has_success_without_empty_active_directory(
             GroupWikiPages(200, (_page("home", "markdown", "old"),))
         )
         _exporter(populated, store, destination).sync_group(1, "root", base)
-        retired = destination / ".sync/staging/empty-group-wiki-1"
-        retired.mkdir()
         result = _exporter(
             FakeGroupWikiClient(GroupWikiPages(200, ())), store, destination
         ).sync_group(1, "root", base)
         assert result.failure is False
-        assert not (base / "wiki").exists() and not retired.exists()
+        assert not (base / "wiki").exists()
+        stale = list(destination.glob("stale/components/group/1/wiki.*"))
+        records = list(destination.glob("stale/components/group/1/record-wiki.*.json"))
+        assert len(stale) == 1 and (stale[0] / "home.md").read_text() == "old"
+        assert len(records) == 1
+        metadata = json.loads(records[0].read_text())
+        assert metadata == {
+            "component": "wiki",
+            "object_id": 1,
+            "object_kind": "group",
+            "prior_source_path": "content/groups/root/wiki",
+            "quarantined_at": metadata["quarantined_at"],
+            "reason": "conclusively_empty_upstream",
+        }
 
         (base / "wiki").mkdir()
         failed = _exporter(
@@ -313,7 +337,7 @@ def test_interrupted_tree_swap_recovers_complete_staging(
         assert store.pending_recoveries("group_wiki_publication", "group", 1) == ()
 
 
-def test_publication_and_all_recovery_fallback_branches(tmp_path: Path) -> None:
+def test_swap_rejects_unmanaged_active_wiki(tmp_path: Path) -> None:
     destination = tmp_path / "corpus"
     with StateStore.initialize_destination(
         destination, "https://git.example", 1
@@ -323,47 +347,39 @@ def test_publication_and_all_recovery_fallback_branches(tmp_path: Path) -> None:
             FakeGroupWikiClient(GroupWikiPages(200, ())), store, destination
         )
         active = base / "wiki"
-
-        def tree(path: Path, content: str = "x") -> None:
-            path.mkdir(parents=True)
-            (path / ".gitlab-groupsync.json").write_text(
-                json.dumps({"object_kind": "group", "object_id": 1, "resource": "wiki"})
-            )
-            (path / "home.md").write_text(content)
-
-        # A direct swap still refuses an unmanaged active tree defensively.
         active.mkdir()
-        invalid_parent = destination / ".sync/staging/invalid"
-        invalid_staged = invalid_parent / "wiki"
-        tree(invalid_staged)
-        invalid_id = store.record_recovery(
+        parent = destination / ".sync/staging/invalid"
+        staged = parent / "wiki"
+        _managed_wiki_tree(staged)
+        recovery_id = store.record_recovery(
             "group_wiki_publication",
             "group",
             1,
             "prepared",
-            source_path=str(invalid_staged),
+            source_path=str(staged),
             destination_path=str(active),
-            details={"backup_path": str(invalid_parent / "previous")},
+            details={"backup_path": str(parent / "previous")},
         )
         with pytest.raises(PathSafetyError, match="unmanaged group wiki"):
-            exporter._swap(
-                invalid_id,
-                1,
-                invalid_staged,
-                active,
-                invalid_parent / "previous",
-            )
-        store.update_recovery(invalid_id, "abandoned")
-        shutil.rmtree(active)
-        shutil.rmtree(invalid_parent)
+            exporter._swap(recovery_id, 1, staged, active, parent / "previous")
 
-        # Existing backup cleanup during a complete swap.
-        tree(active, "old")
+
+def test_swap_replaces_active_wiki_when_backup_exists(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        base = group_path(destination, "root", 1)
+        exporter = _exporter(
+            FakeGroupWikiClient(GroupWikiPages(200, ())), store, destination
+        )
+        active = base / "wiki"
+        _managed_wiki_tree(active, "old")
         parent = destination / ".sync/staging/manual"
         staged = parent / "wiki"
         backup = parent / "previous"
-        tree(staged, "new")
-        tree(backup, "older")
+        _managed_wiki_tree(staged, "new")
+        _managed_wiki_tree(backup, "older")
         recovery_id = store.record_recovery(
             "group_wiki_publication",
             "group",
@@ -375,12 +391,24 @@ def test_publication_and_all_recovery_fallback_branches(tmp_path: Path) -> None:
         )
         exporter._swap(recovery_id, 1, staged, active, backup)
         assert (active / "home.md").read_text() == "new"
+        assert not backup.exists()
 
-        # Source already moved: accept valid active and remove leftover backup.
+
+def test_recovery_accepts_published_wiki_and_removes_backup(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        base = group_path(destination, "root", 1)
+        exporter = _exporter(
+            FakeGroupWikiClient(GroupWikiPages(200, ())), store, destination
+        )
+        active = base / "wiki"
+        _managed_wiki_tree(active)
         parent = destination / ".sync/staging/already-moved"
         missing = parent / "wiki"
         backup = parent / "previous"
-        tree(backup)
+        _managed_wiki_tree(backup)
         store.record_recovery(
             "group_wiki_publication",
             "group",
@@ -390,14 +418,25 @@ def test_publication_and_all_recovery_fallback_branches(tmp_path: Path) -> None:
             destination_path=str(active.relative_to(destination)),
             details={"backup_path": str(backup.relative_to(destination))},
         )
-        assert exporter._recover(1) == 0 and not backup.exists()
+        assert exporter.recover(1) == 0 and not backup.exists()
 
-        # Invalid active with a backup restores the previous complete tree.
-        shutil.rmtree(active)
+
+def test_recovery_restores_backup_when_publication_source_is_missing(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        base = group_path(destination, "root", 1)
+        exporter = _exporter(
+            FakeGroupWikiClient(GroupWikiPages(200, ())), store, destination
+        )
+        active = base / "wiki"
         parent = destination / ".sync/staging/restore"
         missing = parent / "wiki"
         backup = parent / "previous"
-        tree(backup, "restored")
+        _managed_wiki_tree(backup, "restored")
         store.record_recovery(
             "group_wiki_publication",
             "group",
@@ -407,30 +446,56 @@ def test_publication_and_all_recovery_fallback_branches(tmp_path: Path) -> None:
             destination_path=str(active.relative_to(destination)),
             details={"backup_path": str(backup.relative_to(destination))},
         )
-        assert exporter._recover(1) == 1
+        assert exporter.recover(1) == 1
         assert (active / "home.md").read_text() == "restored"
 
-        # Missing source, destination, and backup is abandoned.
-        for child in active.iterdir():
-            child.unlink()
-        active.rmdir()
+
+def test_recovery_abandons_publication_when_no_tree_survives(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        base = group_path(destination, "root", 1)
+        exporter = _exporter(
+            FakeGroupWikiClient(GroupWikiPages(200, ())), store, destination
+        )
+        active = base / "wiki"
         store.record_recovery(
             "group_wiki_publication",
             "group",
             1,
             "prepared",
-            source_path=str(destination / ".sync/staging/gone/wiki"),
+            source_path=".sync/staging/gone/wiki",
             destination_path=str(active.relative_to(destination)),
             details={"backup_path": ".sync/staging/gone/previous"},
         )
-        assert exporter._recover(1) == 1
+        assert exporter.recover(1) == 1
+        assert store.pending_recoveries("group_wiki_publication", "group", 1) == ()
 
-        # A malformed marker exercises defensive validation.
+
+def test_wiki_tree_with_malformed_marker_is_invalid(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        base = group_path(destination, "root", 1)
+        exporter = _exporter(
+            FakeGroupWikiClient(GroupWikiPages(200, ())), store, destination
+        )
+        active = base / "wiki"
         active.mkdir()
         (active / ".gitlab-groupsync.json").write_text("not-json")
         assert exporter._valid_tree(active, 1) is False
 
-        # Recovery state write failure is retained for another attempt.
+
+def test_recovery_remains_pending_when_state_update_fails(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        exporter = _exporter(
+            FakeGroupWikiClient(GroupWikiPages(200, ())), store, destination
+        )
         pending = store.record_recovery(
             "group_wiki_publication",
             "group",
@@ -450,10 +515,14 @@ def test_publication_and_all_recovery_fallback_branches(tmp_path: Path) -> None:
             original(record_id, state)
 
         store.update_recovery = fail_update  # type: ignore[method-assign]
-        assert exporter._recover(1) == 1
+        assert exporter.recover(1) == 1
+        assert (
+            store.pending_recoveries("group_wiki_publication", "group", 1)[0]["id"]
+            == pending
+        )
 
 
-def test_empty_with_lifecycle_retires_content_and_recovery_swap_failure(
+def test_failed_recovery_swap_remains_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     destination = tmp_path / "corpus"
@@ -461,27 +530,9 @@ def test_empty_with_lifecycle_retires_content_and_recovery_swap_failure(
         destination, "https://git.example", 1
     ) as store:
         base = group_path(destination, "root", 1)
-        lifecycle = LifecycleReconciler(destination, store)
-        populated = GroupWikiExporter(
-            FakeGroupWikiClient(
-                GroupWikiPages(200, (_page("home", "markdown", "old"),))
-            ),
-            store,
-            destination,
-            "https://git.example",
-            lifecycle=lifecycle,
+        exporter = _exporter(
+            FakeGroupWikiClient(GroupWikiPages(200, ())), store, destination
         )
-        assert populated.sync_group(1, "root", base).status == "ok"
-        empty = GroupWikiExporter(
-            FakeGroupWikiClient(GroupWikiPages(200, ())),
-            store,
-            destination,
-            "https://git.example",
-            lifecycle=lifecycle,
-        )
-        assert empty.sync_group(1, "root", base).status == "empty"
-        assert not (base / "wiki").exists()
-
         staged = destination / ".sync/staging/recovery/wiki"
         staged.mkdir(parents=True)
         (staged / ".gitlab-groupsync.json").write_text(
@@ -500,23 +551,9 @@ def test_empty_with_lifecycle_retires_content_and_recovery_swap_failure(
         def fail_swap(*args: Any) -> None:
             raise PathSafetyError("collision")
 
-        monkeypatch.setattr(empty, "_swap", fail_swap)
-        assert empty._recover(1) == 1
+        monkeypatch.setattr(exporter, "_swap", fail_swap)
+        assert exporter.recover(1) == 1
         assert (
             store.pending_recoveries("group_wiki_publication", "group", 1)[0]["id"]
             == record_id
-        )
-        missing_id = store.record_recovery(
-            "group_wiki_publication",
-            "group",
-            1,
-            "prepared",
-            source_path=".sync/staging/missing/wiki",
-            destination_path="content/groups/root/missing-wiki",
-            details={"backup_path": ".sync/staging/missing/previous"},
-        )
-        assert empty._recover(1) == 2
-        assert all(
-            record["id"] != missing_id
-            for record in store.pending_recoveries("group_wiki_publication", "group", 1)
         )

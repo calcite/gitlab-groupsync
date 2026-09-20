@@ -198,18 +198,18 @@ def test_component_identity_unmanaged_collision_and_path_hazards(
         contained_path(root, "link/escape")
 
 
-def test_lifecycle_defensive_collisions_and_recovery_failures(tmp_path: Path) -> None:
+def test_lifecycle_rejects_unsupported_object_kind() -> None:
+    with pytest.raises(ReconcileError, match="unsupported"):
+        reconcile.object_relative("note", "root/a")
+
+
+def test_missing_component_retirement_and_restore_are_noops(tmp_path: Path) -> None:
     destination = tmp_path / "corpus"
     with StateStore.initialize_destination(
         destination, "https://git.example", 1
     ) as store:
         lifecycle = LifecycleReconciler(destination, store)
-        with pytest.raises(ReconcileError, match="unsupported"):
-            reconcile.object_relative("note", "root/a")
-
         ensure_object_directory(destination, "project", "root/app", 10)
-        store.upsert_object("project", 10, "root/app")
-        store.upsert_resource("project", 10, "repository", "ok")
         assert (
             lifecycle.retire_component(
                 "project", 10, "root/app", "wiki", "configured_exclusion"
@@ -221,6 +221,16 @@ def test_lifecycle_defensive_collisions_and_recovery_failures(tmp_path: Path) ->
             is False
         )
 
+
+def test_path_reuse_quarantines_previous_object(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
+        ensure_object_directory(destination, "project", "root/app", 10)
+        store.upsert_object("project", 10, "root/app")
+        store.upsert_resource("project", 10, "repository", "ok")
         lifecycle.reconcile_live("project", 20, "root/app")
         assert store.get_object("project", 10)["status_reason"] == "path_reused"
         assert store.get_resource("project", 10, "repository")["status"] == (
@@ -228,14 +238,37 @@ def test_lifecycle_defensive_collisions_and_recovery_failures(tmp_path: Path) ->
         )
         lifecycle.quarantine_object("project", 10, "root/app", "again", {})
 
+
+def test_relocation_rejects_occupied_target_and_preserves_both(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
         occupied = ensure_object_directory(destination, "project", "root/occupied", 31)
         source = ensure_object_directory(destination, "project", "root/source", 30)
         store.upsert_object("project", 30, "root/source")
         with pytest.raises(ReconcileError, match="occupied"):
             lifecycle._relocate_object("project", 30, "root/source", "root/occupied")
         assert source.exists() and occupied.exists()
-        lifecycle._relocate_object("project", 30, "root/missing", "root/elsewhere")
 
+
+def test_relocation_with_missing_source_is_a_noop(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
+        lifecycle._relocate_object("project", 30, "root/missing", "root/elsewhere")
+        assert not (destination / "content/projects/root/elsewhere").exists()
+
+
+def test_recovery_rejects_unsafe_persisted_path(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
         store.record_recovery(
             "relocation",
             "project",
@@ -247,9 +280,18 @@ def test_lifecycle_defensive_collisions_and_recovery_failures(tmp_path: Path) ->
         )
         assert lifecycle.recover() == 1
 
+
+def test_recovery_rejects_relocation_when_source_and_target_exist(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
         both_source = destination / "content/projects/root/both-source"
         both_target = destination / "content/projects/root/both-target"
-        both_source.mkdir()
+        both_source.mkdir(parents=True)
         both_target.mkdir()
         record_id = store.record_recovery(
             "relocation",
@@ -271,6 +313,16 @@ def test_lifecycle_defensive_collisions_and_recovery_failures(tmp_path: Path) ->
                     "details": {"mode": "project"},
                 }
             )
+
+
+def test_recovery_rejects_relocation_when_source_and_target_are_absent(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
         gone_id = store.record_recovery(
             "relocation",
             "project",
@@ -292,12 +344,36 @@ def test_lifecycle_defensive_collisions_and_recovery_failures(tmp_path: Path) ->
                 }
             )
 
+
+def test_relocation_to_existing_identity_is_a_noop(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
+        ensure_object_directory(destination, "project", "root/source", 50)
         same = ensure_object_directory(destination, "project", "root/same", 50)
         lifecycle._relocate_object("project", 50, "root/source", "root/same")
         assert same.exists()
 
+
+def test_restore_without_stale_path_is_a_noop(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
         no_stale = {"kind": "project", "global_id": 60, "stale_path": None}
         lifecycle._restore_object(no_stale, "root/no-stale")
+        assert not (destination / "content/projects/root/no-stale").exists()
+
+
+def test_restore_rejects_occupied_target(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
         stale = destination / "stale/objects/project/61.test"
         stale.mkdir(parents=True)
         atomic_target = ensure_object_directory(
@@ -315,7 +391,7 @@ def test_lifecycle_defensive_collisions_and_recovery_failures(tmp_path: Path) ->
             )
 
 
-def test_component_marker_validation_branches(tmp_path: Path) -> None:
+def test_repository_retirement_rejects_file_component(tmp_path: Path) -> None:
     destination = tmp_path / "corpus"
     with StateStore.initialize_destination(
         destination, "https://git.example", 1
@@ -328,13 +404,29 @@ def test_component_marker_validation_branches(tmp_path: Path) -> None:
             lifecycle.retire_component(
                 "project", 10, "root/app", "repository", "disabled"
             )
-        repository.unlink()
+
+
+def test_repository_retirement_requires_managed_marker(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
+        project = ensure_object_directory(destination, "project", "root/app", 10)
+        repository = project / "repository"
         repository.mkdir()
         with pytest.raises(ReconcileError, match="marker is invalid"):
             lifecycle.retire_component(
                 "project", 10, "root/app", "repository", "disabled"
             )
 
+
+def test_group_wiki_retirement_requires_matching_identity(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
         group = ensure_object_directory(destination, "group", "root/team", 2)
         wiki = group / "wiki"
         wiki.mkdir()
@@ -342,6 +434,16 @@ def test_component_marker_validation_branches(tmp_path: Path) -> None:
         with pytest.raises(ReconcileError, match="group wiki identity"):
             lifecycle.retire_component("group", 2, "root/team", "wiki", "disabled")
 
+
+def test_work_item_retirement_requires_matching_project_identity(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
+        project = ensure_object_directory(destination, "project", "root/app", 10)
         (project / "project.json").write_text('{"id": 99}')
         work_items = project / "work-items"
         work_items.mkdir()
@@ -383,9 +485,7 @@ def test_group_move_collision_and_invalid_marker(tmp_path: Path) -> None:
             lifecycle._finish_move(record)
 
 
-def test_inventory_failures_are_isolated_and_restore_noop_branches(
-    tmp_path: Path,
-) -> None:
+def test_inventory_path_failures_are_isolated(tmp_path: Path) -> None:
     destination = tmp_path / "corpus"
     with StateStore.initialize_destination(
         destination, "https://git.example", 1
@@ -395,12 +495,29 @@ def test_inventory_failures_are_isolated_and_restore_noop_branches(
         unsafe_live = _inventory(projects=((20, "../also-unsafe"),))
         assert lifecycle.reconcile_inventory(unsafe_live) == 2
 
+
+def test_restoring_active_component_is_a_noop(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
         project = ensure_object_directory(destination, "project", "root/app", 30)
         _git_component(project, 30, "repository")
         assert (
             lifecycle.restore_component("project", 30, "root/app", "repository")
             is False
         )
+
+
+def test_restoring_component_without_stale_tree_is_a_noop(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        lifecycle = LifecycleReconciler(destination, store)
+        project = ensure_object_directory(destination, "project", "root/app", 30)
+        _git_component(project, 30, "repository")
         stale_root = destination / "stale/components/project/30"
         stale_root.mkdir(parents=True)
         (stale_root / "record-repository.json").write_text("{}")
@@ -410,7 +527,12 @@ def test_inventory_failures_are_isolated_and_restore_noop_branches(
             is False
         )
 
+
+def test_object_directory_rejects_file_collision(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(destination, "https://git.example", 1):
         file_target = destination / "content/projects/root/file-target"
+        file_target.parent.mkdir(parents=True)
         file_target.write_text("collision")
         with pytest.raises(ReconcileError, match="unmanaged"):
             ensure_object_directory(destination, "project", "root/file-target", 40)

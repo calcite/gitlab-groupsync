@@ -190,6 +190,15 @@ outside it. Every completed initialized sync publishes `SEARCH_GUIDE.md`; read i
 and `manifest.json` before making freshness or completeness claims. A fixture
 corpus is checked in at [`examples/sample-corpus`](examples/sample-corpus).
 
+The internal SQLite state starts at schema version 1 in the first release; future
+migrations use that released layout as their baseline. Pre-release destinations
+with development schema versions 2 through 5 must be removed and recreated.
+See [ADR 0002](docs/adr/0002-initial-state-schema-baseline.md).
+
+Resource metadata uses `revision` only for source revision identifiers. Work-item
+resources have no source revision and instead publish their durable row count as
+`item_count` in `project.json`, `manifest.json`, and JSON status output.
+
 Git trees update in place, so a concurrent reader may see a non-atomic tree
 transition. Work-item Markdown is replaced atomically per file. Searching agents
 should use a read-only bind mount where practical and must treat repository,

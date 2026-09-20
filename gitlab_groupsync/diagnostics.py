@@ -3,7 +3,7 @@
 import json
 import subprocess
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import quote
 
@@ -256,11 +256,3 @@ def render_doctor(report: DoctorReport) -> str:
     ]
     lines.append("Healthy" if report.healthy else "Partial failures detected")
     return "\n".join(lines)
-
-
-def doctor_as_dict(report: DoctorReport) -> dict[str, Any]:
-    """Small helper for callers needing structured diagnostic results."""
-    return {
-        "healthy": report.healthy,
-        "checks": [asdict(item) for item in report.checks],
-    }

@@ -192,11 +192,11 @@ class SyncOrchestrator:
             lifecycle=lifecycle,
         )
         failures += sum(
-            work_items._recover_publications(int(value["global_id"]))
+            work_items.recover(int(value["global_id"]))
             for value in store.objects("project")
         )
         failures += sum(
-            group_wikis._recover(int(value["global_id"]))
+            group_wikis.recover(int(value["global_id"]))
             for value in store.objects("group")
         )
         failures += self._run_group_wikis(store, live, lifecycle, group_wikis)
@@ -510,7 +510,9 @@ class SyncOrchestrator:
             self.token if self.config["gitlab"]["git_transport"] == "https" else None
         )
         try:
-            head = self.git.remote_head(remote, token=git_token)
+            head = self.git.remote_head(
+                remote, token=git_token, resource_key=f"project:{details.id}:wiki"
+            )
             if head is None:
                 raise GitSyncError("wiki API reported pages but Git remote is empty")
             branch, _ = head

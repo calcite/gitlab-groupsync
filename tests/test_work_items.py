@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -161,7 +160,7 @@ def _exporter(client: Any, store: StateStore, destination: Path) -> WorkItemExpo
     )
 
 
-def test_issue_task_metadata_threads_relationships_and_deterministic_no_rewrite(
+def test_issue_export_renders_metadata_threads_relationships_and_uploads(
     tmp_path: Path,
 ) -> None:
     destination = tmp_path / "corpus"
@@ -194,6 +193,30 @@ def test_issue_task_metadata_threads_relationships_and_deterministic_no_rewrite(
         assert markdown.count("changed state") == 1
         assert "## System Activity" in markdown
         assert "#note_1" in markdown and "resolved `False`" in markdown
+        raw = json.loads(raw_path.read_text())
+        assert raw["item"]["id"] == 101
+        assert "fetched_at" not in raw
+        resource = store.resources_for_object("project", 10)["work_items"]
+        assert resource["revision"] is None
+        assert resource["item_count"] == 2
+
+
+def test_task_export_uses_work_item_url_and_resolves_all_uploads(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "corpus"
+    client = FakeWorkItemClient([_item(2, item_type="task", state="closed")])
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        result = _exporter(client, store, destination).sync_project(
+            10,
+            "root/app",
+            destination / "content/projects/root/app",
+            force_full=False,
+            run_started_at="2026-09-20T09:00:00+00:00",
+        )
+        assert result.status == "ok"
         task = (destination / "content/projects/root/app/work-items/2.md").read_text()
         assert "confidential: true" in task
         assert 'state: "closed"' in task
@@ -202,15 +225,30 @@ def test_issue_task_metadata_threads_relationships_and_deterministic_no_rewrite(
         assert "https://git.example/root/app/-/uploads/a/file.txt" in task
         assert "https://git.example/root/app/-/uploads/task-comment.txt" in task
         assert "/-/-/uploads/" not in task
-        raw = json.loads(raw_path.read_text())
-        assert raw["item"]["id"] == 101
-        assert "fetched_at" not in raw
-        before = (markdown_path.stat().st_mtime_ns, raw_path.stat().st_mtime_ns)
 
+
+def test_unchanged_incremental_export_does_not_rewrite_files(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    client = FakeWorkItemClient([_item(1)])
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        exporter = _exporter(client, store, destination)
+        root = destination / "content/projects/root/app"
+        exporter.sync_project(
+            10,
+            "root/app",
+            root,
+            force_full=False,
+            run_started_at="2026-09-20T09:00:00+00:00",
+        )
+        markdown_path = root / "work-items/1.md"
+        raw_path = destination / ".sync/raw/projects/10/work-items/101.json"
+        before = (markdown_path.stat().st_mtime_ns, raw_path.stat().st_mtime_ns)
         result = exporter.sync_project(
             10,
             "root/app",
-            destination / "content/projects/root/app",
+            root,
             force_full=False,
             run_started_at="2026-09-20T09:30:00+00:00",
         )
@@ -325,7 +363,7 @@ def test_interrupted_publication_recovers_from_complete_raw_snapshot(
 ) -> None:
     destination = tmp_path / "corpus"
     client = FakeWorkItemClient([_item(1)])
-    real_write = work_items._atomic_write_text
+    real_write = work_items.atomic_write_text
     calls = 0
 
     def interrupt(path: Path, content: str) -> bool:
@@ -340,7 +378,7 @@ def test_interrupted_publication_recovers_from_complete_raw_snapshot(
     ) as store:
         exporter = _exporter(client, store, destination)
         root = destination / "content/projects/root/app"
-        monkeypatch.setattr(work_items, "_atomic_write_text", interrupt)
+        monkeypatch.setattr(work_items, "atomic_write_text", interrupt)
         first = exporter.sync_project(
             10,
             "root/app",
@@ -381,17 +419,29 @@ def test_work_item_identity_validation(changes: dict[str, Any], message: str) ->
         work_items._item_identity(value)
 
 
-def test_renderer_defensive_shapes_people_and_wrapped_uploads() -> None:
+def test_wrapped_relative_upload_is_resolved_against_project() -> None:
     assert (
         work_items.resolve_upload_links(
             "[x](<uploads/a.txt>)", "https://git.example/root/app/issues/1"
         )
         == "[x](<https://git.example/root/app/-/uploads/a.txt>)"
     )
-    assert work_items._person(None) == "Unknown"
-    assert work_items._person({"name": "Name"}) == "Name"
-    assert work_items._person({"username": "user"}) == "@user"
-    assert work_items._person({}) == "Unknown"
+
+
+@pytest.mark.parametrize(
+    ("person", "rendered"),
+    [
+        (None, "Unknown"),
+        ({"name": "Name"}, "Name"),
+        ({"username": "user"}, "@user"),
+        ({}, "Unknown"),
+    ],
+)
+def test_person_uses_available_name_or_username(person: Any, rendered: str) -> None:
+    assert work_items._person(person) == rendered
+
+
+def test_malformed_discussion_entries_are_ignored() -> None:
     assert work_items._notes({"discussions": {}}) == ([], [])
     threads, system = work_items._notes(
         {
@@ -403,31 +453,26 @@ def test_renderer_defensive_shapes_people_and_wrapped_uploads() -> None:
         }
     )
     assert threads == [] and system == []
-    assert work_items._relationship_lines({"relationships": {}})[0].startswith("No")
-    assert work_items._relationship_lines({"relationships": ["bad"]})[0].startswith(
-        "No"
-    )
 
 
-def test_atomic_markdown_failure_cleans_temporary_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    target = tmp_path / "item.md"
-
-    def fail_replace(source: str, destination: Path) -> None:
-        del destination
-        os.unlink(source)
-        raise OSError("failed")
-
-    monkeypatch.setattr(os, "replace", fail_replace)
-    with pytest.raises(StateError, match="Markdown"):
-        work_items._atomic_write_text(target, "content")
-    assert list(tmp_path.glob("*.tmp")) == []
+@pytest.mark.parametrize("relationships", [{}, ["bad"]])
+def test_malformed_relationships_render_as_unavailable(relationships: Any) -> None:
+    assert work_items._relationship_lines({"relationships": relationships})[
+        0
+    ].startswith("No")
 
 
-def test_listing_failure_bad_retry_full_due_and_recovery_failure_paths(
-    tmp_path: Path,
-) -> None:
+def test_invalid_full_checkpoint_requires_full_reconciliation(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        assert _exporter(FakeWorkItemClient([]), store, destination)._full_due(
+            "invalid"
+        )
+
+
+def test_listing_failure_marks_work_item_resource_error(tmp_path: Path) -> None:
     destination = tmp_path / "corpus"
 
     class FailedListing(FakeWorkItemClient):
@@ -435,18 +480,10 @@ def test_listing_failure_bad_retry_full_due_and_recovery_failure_paths(
             raise DiscoveryError("listing page failed")
             yield  # pragma: no cover
 
-        def project_issue(self, project_id: int, iid: int):
-            raise DiscoveryError("retry inaccessible")
-
-    client = FailedListing([])
     with StateStore.initialize_destination(
         destination, "https://git.example", 1
     ) as store:
-        exporter = _exporter(client, store, destination)
-        assert exporter._full_due("invalid") is True
-        store.enqueue_retry("project:10:work-items", "bad", "bad")
-        store.enqueue_retry("project:10:work-items", "99", "bad")
-        result = exporter.sync_project(
+        result = _exporter(FailedListing([]), store, destination).sync_project(
             10,
             "root/app",
             destination / "content/projects/root/app",
@@ -456,52 +493,42 @@ def test_listing_failure_bad_retry_full_due_and_recovery_failure_paths(
         assert result.failures == 1
         assert store.get_resource("project", 10, "work_items")["status"] == "error"
 
-        class EmptyWithFailedRetry(FakeWorkItemClient):
-            def project_issue(self, project_id: int, iid: int):
-                raise DiscoveryError("retry inaccessible")
 
-        exporter.client = EmptyWithFailedRetry([])  # type: ignore[assignment]
-        retried = exporter.sync_project(
+def test_invalid_and_inaccessible_retry_entries_are_counted(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+
+    class EmptyWithFailedRetry(FakeWorkItemClient):
+        def project_issue(self, project_id: int, iid: int):
+            raise DiscoveryError("retry inaccessible")
+
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        store.enqueue_retry("project:10:work-items", "bad", "bad")
+        store.enqueue_retry("project:10:work-items", "99", "bad")
+        result = _exporter(EmptyWithFailedRetry([]), store, destination).sync_project(
             10,
             "root/app",
             destination / "content/projects/root/app",
             force_full=True,
-            run_started_at="2026-09-20T08:30:00+00:00",
+            run_started_at="2026-09-20T08:00:00+00:00",
         )
-        assert retried.failures == 2
+        assert result.failures == 2
 
-        raw = destination / ".sync/raw/bad.json"
-        raw.parent.mkdir(parents=True, exist_ok=True)
-        raw.write_text("not-json")
-        encoded = raw.read_bytes()
-        common = {
-            "global_id": 1,
-            "iid": 1,
-            "item_type": "issue",
-            "web_url": "https://git.example/root/app/-/issues/1",
-            "source_updated_at": "now",
-            "content_path": str(destination / "content/bad.md"),
-            "raw_path": str(raw),
-            "content_hash": "wrong",
-        }
+
+def test_recovery_abandons_publication_with_missing_paths(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
         store.record_recovery(
             "work_item_publication",
             "project",
             10,
             "prepared",
-            details={**common, "raw_hash": "wrong"},
+            details={},
         )
-        store.record_recovery(
-            "work_item_publication",
-            "project",
-            10,
-            "prepared",
-            details={
-                **common,
-                "raw_hash": hashlib.sha256(encoded).hexdigest(),
-            },
-        )
-        assert exporter._recover_publications(10) == 2
+        assert _exporter(FakeWorkItemClient([]), store, destination).recover(10) == 1
         assert store.pending_recoveries("work_item_publication", "project", 10) == ()
 
 
@@ -527,51 +554,20 @@ def test_malformed_list_item_is_a_partial_project_failure_without_checkpoint(
         assert store.get_resource("project", 10, "work_items")["status"] == "error"
 
 
-def test_recovery_content_hash_and_cross_project_local_link(tmp_path: Path) -> None:
+def test_cross_project_link_uses_current_safe_project_path(tmp_path: Path) -> None:
     destination = tmp_path / "corpus"
-    client = FakeWorkItemClient([_item(1)])
     with StateStore.initialize_destination(
         destination, "https://git.example", 1
     ) as store:
-        exporter = _exporter(client, store, destination)
+        exporter = _exporter(FakeWorkItemClient([]), store, destination)
         root = destination / "content/projects/root/app"
-        exporter.sync_project(
-            10,
-            "root/app",
-            root,
-            force_full=False,
-            run_started_at="2026-09-20T08:00:00+00:00",
-        )
-        raw = destination / ".sync/raw/projects/10/work-items/101.json"
-        encoded = raw.read_bytes()
-        state_item = store.work_item(10, 1)
-        details = {
-            "global_id": 101,
-            "iid": 1,
-            "item_type": "issue",
-            "web_url": state_item["web_url"],
-            "source_updated_at": state_item["source_updated_at"],
-            "content_path": state_item["content_path"],
-            "raw_path": str(raw),
-            "content_hash": "wrong",
-            "raw_hash": hashlib.sha256(encoded).hexdigest(),
-        }
-        store.record_recovery(
-            "work_item_publication",
-            "project",
-            10,
-            "prepared",
-            details=details,
-        )
-        assert exporter._recover_publications(10) == 1
-
         target = destination / "content/projects/root/other/work-items/2.md"
         store.upsert_work_item(
             global_id=202,
             project_id=20,
             iid=2,
             item_type="task",
-            web_url="https://git.example/root/other/-/issues/2",
+            web_url="https://git.example/root/other/-/work_items/2",
             content_path=str(target),
             raw_path="raw",
             source_updated_at="now",
@@ -589,18 +585,23 @@ def test_recovery_content_hash_and_cross_project_local_link(tmp_path: Path) -> N
         )
 
 
-def test_contained_recovery_hash_json_and_relative_link_branches(
-    tmp_path: Path,
-) -> None:
+def test_export_rejects_project_root_outside_destination(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        exporter = _exporter(FakeWorkItemClient([_item(1)]), store, destination)
+        with pytest.raises(StateError, match="unsafe work-item"):
+            exporter._export_item(10, "root/app", tmp_path / "outside", _item(1), {1})
+
+
+def test_recovery_handles_hash_mismatch_and_malformed_snapshot(tmp_path: Path) -> None:
     destination = tmp_path / "corpus"
     client = FakeWorkItemClient([_item(1)])
     with StateStore.initialize_destination(
         destination, "https://git.example", 1
     ) as store:
         exporter = _exporter(client, store, destination)
-        with pytest.raises(StateError, match="unsafe work-item"):
-            exporter._export_item(10, "root/app", tmp_path / "outside", _item(1), {1})
-
         root = destination / "content/projects/root/app"
         exporter.sync_project(
             10,
@@ -656,8 +657,16 @@ def test_contained_recovery_hash_json_and_relative_link_branches(
                 "raw_hash": hashlib.sha256(malformed.read_bytes()).hexdigest(),
             },
         )
-        assert exporter._recover_publications(10) == 2
+        assert exporter.recover(10) == 2
 
+
+def test_relative_persisted_path_produces_cross_project_link(tmp_path: Path) -> None:
+    destination = tmp_path / "corpus"
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        exporter = _exporter(FakeWorkItemClient([]), store, destination)
+        content = destination / "content/projects/root/app/work-items/1.md"
         relative_target = "content/projects/root/other/work-items/2.md"
         store.upsert_work_item(
             global_id=303,

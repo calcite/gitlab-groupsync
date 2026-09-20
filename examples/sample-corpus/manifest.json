@@ -6,6 +6,7 @@
     "details": [
       {
         "branch": null,
+        "item_count": null,
         "kind": "wiki",
         "last_attempt_at": "2026-09-20T10:00:00+00:00",
         "last_error": null,
@@ -21,6 +22,7 @@
       },
       {
         "branch": "main",
+        "item_count": null,
         "kind": "repository",
         "last_attempt_at": "2026-09-20T10:00:00+00:00",
         "last_error": null,
@@ -36,6 +38,7 @@
       },
       {
         "branch": "wiki-main",
+        "item_count": null,
         "kind": "wiki",
         "last_attempt_at": "2026-09-20T10:00:00+00:00",
         "last_error": null,
@@ -51,6 +54,7 @@
       },
       {
         "branch": null,
+        "item_count": 2,
         "kind": "work_items",
         "last_attempt_at": "2026-09-20T10:00:00+00:00",
         "last_error": null,
@@ -61,7 +65,7 @@
         "object_id": 501,
         "object_kind": "project",
         "retained_content": false,
-        "revision": "2",
+        "revision": null,
         "status": "ok"
       }
     ],
