@@ -1,0 +1,15 @@
+[Unit]
+Description=Synchronize the GitLab reference corpus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gl-groupsync
+Group=gl-groupsync
+EnvironmentFile=/etc/gl-groupsync/environment
+ExecStart=/usr/local/bin/gl-groupsync sync --config /etc/gl-groupsync/config.yaml
+
+# This example is not installed automatically. Restrict it further for your host.
+NoNewPrivileges=true
+PrivateTmp=true

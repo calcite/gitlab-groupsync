@@ -1,0 +1,23 @@
+# Schema-free bootstrap example. No token value belongs in this file.
+gitlab:
+  url: https://gitlab.example.com
+  group: engineering
+  token_env: GITLAB_TOKEN
+  token_file: null
+  git_transport: ssh
+  ca_bundle: null
+storage:
+  destination: /srv/gitlab-reference
+sync:
+  include_shared_projects: false
+  include_archived_projects: true
+  workers: 4
+  api_timeout_seconds: 30
+  git_timeout_seconds: 600
+  max_attempts: 3
+  full_reconcile_hours: 168
+  incremental_overlap_seconds: 300
+inventory:
+  root_group: null
+  groups: []
+  projects: []

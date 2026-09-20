@@ -1,2 +1,87 @@
-general:
-    log_level: INFO  # Logging level [DEBUG, INFO, WARNING, ERROR, CRITICAL]
+gitlab:
+  url:
+    # Base URL of the GitLab instance.
+    oc_default: "https://gitlab.example.com"
+    oc_schema: {type: string, empty: false}
+  group:
+    # Root group full path or numeric global ID.
+    oc_default: "engineering"
+    oc_schema: {type: [string, integer]}
+  token_env:
+    # Name of the environment variable containing the API token.
+    oc_default: "GITLAB_TOKEN"
+    oc_schema: {type: string, nullable: true}
+  token_file:
+    # Alternatively, path to an owner-only token file.
+    oc_default: null
+    oc_schema: {type: string, nullable: true}
+  git_transport:
+    oc_default: "ssh"
+    oc_schema: {type: string, allowed: [ssh, https]}
+  ca_bundle:
+    # Optional custom CA bundle for a self-hosted GitLab instance.
+    oc_default: null
+    oc_schema: {type: string, nullable: true}
+
+storage:
+  destination:
+    oc_default: "/srv/gitlab-reference"
+    oc_schema: {type: string, empty: false}
+
+sync:
+  include_shared_projects:
+    oc_default: false
+    oc_schema: {type: boolean}
+  include_archived_projects:
+    oc_default: true
+    oc_schema: {type: boolean}
+  workers:
+    oc_default: 4
+    oc_schema: {type: integer, min: 1, max: 64}
+  api_timeout_seconds:
+    oc_default: 30
+    oc_schema: {type: integer, min: 1}
+  git_timeout_seconds:
+    oc_default: 600
+    oc_schema: {type: integer, min: 1}
+  max_attempts:
+    oc_default: 3
+    oc_schema: {type: integer, min: 1}
+  full_reconcile_hours:
+    oc_default: 168
+    oc_schema: {type: integer, min: 1}
+  incremental_overlap_seconds:
+    oc_default: 300
+    oc_schema: {type: integer, min: 0}
+
+inventory:
+  root_group:
+    oc_default: null
+    oc_schema:
+      type: dict
+      nullable: true
+      schema:
+        id: {type: integer, required: true}
+        full_path: {type: string, required: true, empty: false}
+  groups:
+    oc_default: []
+    oc_schema:
+      type: list
+      schema:
+        type: dict
+        schema:
+          id: {type: integer, required: true}
+          full_path: {type: string, required: true, empty: false}
+          wiki: {type: boolean, required: true}
+  projects:
+    oc_default: []
+    oc_schema:
+      type: list
+      schema:
+        type: dict
+        schema:
+          id: {type: integer, required: true}
+          full_path: {type: string, required: true, empty: false}
+          repository: {type: boolean, required: true}
+          wiki: {type: boolean, required: true}
+          work_items: {type: boolean, required: true}

@@ -1,0 +1,102 @@
+{
+  "coverage": {
+    "by_status": {
+      "ok": 4
+    },
+    "details": [
+      {
+        "branch": null,
+        "kind": "wiki",
+        "last_attempt_at": "2026-09-20T10:00:00+00:00",
+        "last_error": null,
+        "last_success_at": "2026-09-20T10:00:00+00:00",
+        "limitations": [
+          "fixture-only Group Wikis REST API coverage; not live-tested"
+        ],
+        "object_id": 202,
+        "object_kind": "group",
+        "retained_content": false,
+        "revision": "fixture-group-wiki-revision",
+        "status": "ok"
+      },
+      {
+        "branch": "main",
+        "kind": "repository",
+        "last_attempt_at": "2026-09-20T10:00:00+00:00",
+        "last_error": null,
+        "last_success_at": "2026-09-20T10:00:00+00:00",
+        "limitations": [
+          "detached default branch only"
+        ],
+        "object_id": 501,
+        "object_kind": "project",
+        "retained_content": false,
+        "revision": "0123456789abcdef0123456789abcdef01234567",
+        "status": "ok"
+      },
+      {
+        "branch": "wiki-main",
+        "kind": "wiki",
+        "last_attempt_at": "2026-09-20T10:00:00+00:00",
+        "last_error": null,
+        "last_success_at": "2026-09-20T10:00:00+00:00",
+        "limitations": [
+          "detached default branch only"
+        ],
+        "object_id": 501,
+        "object_kind": "project",
+        "retained_content": false,
+        "revision": "89abcdef0123456789abcdef0123456789abcdef",
+        "status": "ok"
+      },
+      {
+        "branch": null,
+        "kind": "work_items",
+        "last_attempt_at": "2026-09-20T10:00:00+00:00",
+        "last_error": null,
+        "last_success_at": "2026-09-20T10:00:00+00:00",
+        "limitations": [
+          "fixture-only REST issue/task coverage; not live-tested"
+        ],
+        "object_id": 501,
+        "object_kind": "project",
+        "retained_content": false,
+        "revision": "2",
+        "status": "ok"
+      }
+    ],
+    "retained_content": 0,
+    "total": 4
+  },
+  "drift": {
+    "absent": [],
+    "added": [],
+    "observed_at": "2026-09-20T10:00:00+00:00",
+    "path_reused": [],
+    "renamed": []
+  },
+  "fixture_data": true,
+  "freshness": {
+    "last_attempt_at": "2026-09-20T10:00:00+00:00",
+    "last_success_at": "2026-09-20T10:00:00+00:00"
+  },
+  "identity": {
+    "instance_url": "https://gitlab.fixture.invalid",
+    "root_group_id": 100
+  },
+  "limitations": [
+    "Synthetic fixture data only; no GitLab version was live-tested."
+  ],
+  "run_state": {
+    "current": false,
+    "latest": {
+      "exit_code": 0,
+      "finished_at": "2026-09-20T10:00:00+00:00",
+      "id": 1,
+      "interrupted": false,
+      "message": null,
+      "outcome": "success",
+      "started_at": "2026-09-20T10:00:00+00:00"
+    }
+  }
+}

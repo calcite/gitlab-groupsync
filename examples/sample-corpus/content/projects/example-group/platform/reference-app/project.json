@@ -1,0 +1,43 @@
+{
+  "fixture_data": true,
+  "full_path": "example-group/platform/reference-app",
+  "id": 501,
+  "resources": {
+    "repository": {
+      "branch": "main",
+      "last_attempt_at": "2026-09-20T10:00:00+00:00",
+      "last_error": null,
+      "last_success_at": "2026-09-20T10:00:00+00:00",
+      "limitations": [
+        "detached default branch only"
+      ],
+      "retained_content": false,
+      "revision": "0123456789abcdef0123456789abcdef01234567",
+      "status": "ok"
+    },
+    "wiki": {
+      "branch": "wiki-main",
+      "last_attempt_at": "2026-09-20T10:00:00+00:00",
+      "last_error": null,
+      "last_success_at": "2026-09-20T10:00:00+00:00",
+      "limitations": [
+        "detached default branch only"
+      ],
+      "retained_content": false,
+      "revision": "89abcdef0123456789abcdef0123456789abcdef",
+      "status": "ok"
+    },
+    "work_items": {
+      "branch": null,
+      "last_attempt_at": "2026-09-20T10:00:00+00:00",
+      "last_error": null,
+      "last_success_at": "2026-09-20T10:00:00+00:00",
+      "limitations": [
+        "fixture-only REST issue/task coverage; not live-tested"
+      ],
+      "retained_content": false,
+      "revision": "2",
+      "status": "ok"
+    }
+  }
+}

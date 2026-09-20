@@ -1,0 +1,20 @@
+{
+  "fixture_data": true,
+  "full_path": "example-group/docs",
+  "id": 202,
+  "resources": {
+    "wiki": {
+      "branch": null,
+      "last_attempt_at": "2026-09-20T10:00:00+00:00",
+      "last_error": null,
+      "last_success_at": "2026-09-20T10:00:00+00:00",
+      "limitations": [
+        "fixture-only Group Wikis REST API coverage; not live-tested"
+      ],
+      "retained_content": false,
+      "revision": "fixture-group-wiki-revision",
+      "status": "ok"
+    }
+  },
+  "wiki_evidence": "Fixture HTTP 200 with complete REST source page."
+}

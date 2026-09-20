@@ -1,0 +1,14 @@
+[Unit]
+Description=Run GitLab reference synchronization hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5m
+Unit=gl-groupsync.service
+
+[Install]
+WantedBy=timers.target
+
+# Normal hourly runs rely on persisted full_reconcile_hours (168 by default)
+# to trigger weekly work-item reconciliation. This file is not auto-installed.

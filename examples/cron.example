@@ -1,0 +1,4 @@
+# Install manually with crontab only after adjusting paths and permissions.
+# Configure gitlab.token_file as an owner-only file for this noninteractive job.
+# Persisted full_reconcile_hours triggers weekly reconciliation during hourly runs.
+17 * * * * /usr/local/bin/gl-groupsync sync --config /etc/gl-groupsync/config.yaml >>/var/log/gl-groupsync.log 2>&1

@@ -1,0 +1,42 @@
+# Example after discover on a fictional CE instance. IDs and paths are examples.
+# Group wikis remain disabled because they require Premium/Ultimate.
+gitlab:
+  url: https://gitlab.example.com
+  group: engineering
+  token_env: GITLAB_TOKEN
+  token_file: null
+  git_transport: ssh
+  ca_bundle: /etc/gl-groupsync/gitlab-ca.pem
+storage:
+  destination: /srv/gitlab-reference
+sync:
+  include_shared_projects: false
+  include_archived_projects: true
+  workers: 4
+  api_timeout_seconds: 30
+  git_timeout_seconds: 600
+  max_attempts: 3
+  full_reconcile_hours: 168
+  incremental_overlap_seconds: 300
+inventory:
+  root_group:
+    id: 100
+    full_path: engineering
+  groups:
+    - id: 100
+      full_path: engineering
+      wiki: false
+    - id: 110
+      full_path: engineering/platform
+      wiki: false
+  projects:
+    - id: 1000
+      full_path: engineering/platform/reference-app
+      repository: true
+      wiki: true
+      work_items: true
+    - id: 1010
+      full_path: engineering/platform/unselected-app
+      repository: false
+      wiki: false
+      work_items: false

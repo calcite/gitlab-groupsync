@@ -1,0 +1,9 @@
+{
+  "component": "wiki",
+  "fixture_data": true,
+  "object_id": 501,
+  "object_kind": "project",
+  "prior_source_path": "content/projects/example-group/platform/reference-app/wiki",
+  "quarantined_at": "2026-09-20T10:00:00+00:00",
+  "reason": "configured_exclusion"
+}

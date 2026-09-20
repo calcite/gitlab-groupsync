@@ -2,16 +2,16 @@
 
 ## 1. Purpose and agreed scope
 
-Build a Python 3.13 command-line application using Click that maintains a searchable, local reference copy of one GitLab group and its descendants. An AI agent searches and reads this tree; development takes place elsewhere. GitLab is authoritative. Synchronization is one-way, periodic and best effort.
+Build a Python 3.13 command-line application using Click that maintains a searchable, selected local reference copy of one GitLab group and its descendants. An AI agent searches and reads this tree; development takes place elsewhere. GitLab is authoritative. Synchronization is one-way, periodic and best effort.
 
 This document is an implementation handoff, not an implementation. Target current GitLab Community Edition at implementation time. Record the exact version used for integration testing; do not treat “latest” as a fixed compatibility guarantee.
 
 Include:
 
-- All accessible projects owned by the target group and its nested subgroups, including archived projects.
-- Each project's checked-out default branch, and its project wiki where available.
-- Group and subgroup wikis as an optional capability, including groups without projects. Group wikis require Premium/Ultimate and are disabled in the target CE configuration.
-- Project issues and tasks, open and closed, including descriptions, metadata, human conversations and available relationships.
+- User-selected projects owned by the target group and its nested subgroups, including archived projects. Discovery lists every accessible owned project so each can be selected independently.
+- Each selected project's independently selected default-branch checkout and project wiki, where available.
+- Independently selected root-group and subgroup wikis, including groups without projects. Group wikis require Premium/Ultimate; every newly discovered group wiki is disabled by default, including in the target CE configuration.
+- Independently selected project issues and tasks, open and closed, including descriptions, metadata, human conversations and available relationships.
 - Provenance and freshness information suitable for an agent to inspect.
 
 Exclude from version 1:
@@ -24,9 +24,9 @@ Exclude from version 1:
 
 ## 2. Stack and package structure
 
-- Python 3.13, Click CLI, system Git executable, Linux as the initial supported platform.
-- Package using `pyproject.toml` with an installed command named `gl-reference`.
-- Use `tomllib` for TOML configuration, `httpx` for API requests, and `pytest` for tests. Keep dependencies small. Invoke Git through subprocess argument lists, never interpolated shell commands.
+- Python 3.13, Click CLI, system Git executable, Linux as the initial supported platform, and `uv` for dependency management, installation, and development commands.
+- Package using `pyproject.toml` with an installed command named `gl-groupsync`.
+- Use Onacol's `ConfigManager` as the single orchestrator for YAML configuration, `httpx` for API requests, and `pytest` for tests. Keep dependencies small. Invoke Git through subprocess argument lists, never interpolated shell commands.
 - Use SQLite from the standard library for durable internal state and transactional checkpointing. Publish a JSON manifest for users and agents; the manifest is not the primary database.
 - Suggested modules: `cli`, `config`, `gitlab_api`, `discovery`, `git_sync`, `work_items`, `render`, `state`, `reconcile`, and `orchestrator`. Favor clear functions and small adapters over a plugin framework.
 - Git and API adapters must be independently testable. Remote text is source data; never execute repository code or render hooks as part of synchronization.
@@ -68,38 +68,60 @@ When a project/group moves or is renamed, relocate managed content and update pr
 Required commands:
 
 ```bash
-gl-reference sync --config /path/to/config.toml
-gl-reference sync --config /path/to/config.toml --full
-gl-reference status --config /path/to/config.toml
-gl-reference status --config /path/to/config.toml --json
-gl-reference doctor --config /path/to/config.toml
+gl-groupsync config-template --output /path/to/config.yaml
+gl-groupsync discover --config /path/to/config.yaml
+gl-groupsync sync --config /path/to/config.yaml
+gl-groupsync sync --config /path/to/config.yaml --full
+gl-groupsync status --config /path/to/config.yaml
+gl-groupsync status --config /path/to/config.yaml --json
+gl-groupsync doctor --config /path/to/config.yaml
 ```
 
-`sync` executes one pass and exits. `--full` forces full work-item/conversation reconciliation; Git updates remain incremental. `status` is local and read-only. `doctor` validates configuration, Git availability, authentication, root-group visibility and API capabilities without changing GitLab or publishing corpus content. All commands have Click help.
+`config-template` writes an editable, schema-free YAML configuration template. `discover` retrieves a complete current inventory and atomically refreshes the generated catalog in that same user YAML file; users then edit its selection flags. `sync` executes one pass for selected components and exits. `--full` forces full work-item/conversation reconciliation; Git updates remain incremental. `status` is local and read-only. `doctor` validates configuration, Git availability, authentication, root-group visibility and API capabilities without changing GitLab, rewriting configuration, or publishing corpus content. All commands have Click help.
 
-Proposed configuration defaults (implementation may refine names while preserving semantics):
+Onacol configuration requirements:
 
-```toml
-[gitlab]
-url = "https://gitlab.example.com"
-group = "engineering"             # Full path or numeric group ID
-token_env = "GITLAB_TOKEN"
-git_transport = "ssh"             # ssh or https
-group_wikis = "disabled"          # disabled, auto, enabled
+- Keep defaults and `oc_schema` validation metadata together in the package's bundled `default_config.yaml`. Generate user templates without Onacol schema metadata.
+- Build one `ConfigManager` per invocation and layer bundled defaults, the optional user YAML selected by `--config`, `GL_GROUPSYNC__...` environment overrides, and Onacol nested CLI overrides in that order, then validate once. Pass the resulting configuration object by reference; do not introduce global configuration state.
+- Use `--` between nested CLI key levels, for example `--sync--workers 8`. Secret token values may come from the configured environment-variable name or protected token file, but generated or refreshed YAML must never contain token values.
+- `discover` requires an explicit user YAML file because it updates that file. Environment and CLI overrides affect the discovery request but are not serialized into the user file.
 
-[storage]
-destination = "/srv/gitlab-reference"
+Proposed schema-free user configuration after successful discovery (implementation may refine names while preserving semantics and stable-ID behavior):
 
-[sync]
-work_items = true
-include_shared_projects = false
-include_archived_projects = true
-workers = 4
-api_timeout_seconds = 30
-git_timeout_seconds = 600
-max_attempts = 3
-full_reconcile_hours = 168
-incremental_overlap_seconds = 300
+```yaml
+gitlab:
+  url: "https://gitlab.example.com"
+  group: "engineering"             # Full path or numeric group ID
+  token_env: "GITLAB_TOKEN"
+  git_transport: "ssh"             # ssh or https
+storage:
+  destination: "/srv/gitlab-reference"
+sync:
+  include_shared_projects: false
+  include_archived_projects: true
+  workers: 4
+  api_timeout_seconds: 30
+  git_timeout_seconds: 600
+  max_attempts: 3
+  full_reconcile_hours: 168
+  incremental_overlap_seconds: 300
+inventory:                          # Generated by discover; selections are user-editable
+  root_group:
+    id: 100
+    full_path: "engineering"
+  groups:                           # Root group and every visible descendant
+    - id: 100
+      full_path: "engineering"
+      wiki: false
+    - id: 110
+      full_path: "engineering/platform"
+      wiki: false
+  projects:
+    - id: 1000
+      full_path: "engineering/platform/service"
+      repository: false
+      wiki: false
+      work_items: false
 ```
 
 Defaults above are engineering recommendations, not requirements for an exact polling frequency. Provide a systemd service/timer example running hourly, with the weekly reconciliation triggered by persisted age. Provide a cron alternative. Scheduling occurs on the user's machine, not through a hosted assistant automation.
@@ -111,7 +133,7 @@ Credentials:
 - HTTPS Git authentication must be noninteractive through an appropriate credential/askpass mechanism; SSH must fail promptly without password or host-key prompts. Retain normal host-key verification.
 - Keep TLS verification enabled and support a custom CA bundle for self-hosted installations. Do not forward tokens to unrelated redirect or attachment hosts.
 
-Exit codes: `0` completed without operational failures (including expected disabled/empty capabilities), `1` completed with partial failures, `2` configuration or fatal discovery/setup failure, `3` another sync owns the lock. A fatal discovery error retains all prior content and records the failed run when state is available.
+Exit codes: `0` completed without operational failures (including expected disabled/empty capabilities and inventory-drift warnings alone), `1` completed with partial operational failures, `2` configuration or fatal discovery/setup failure, `3` another sync owns the lock. A fatal discovery error retains all prior content and configuration and records the failed run when state is available. Inventory drift does not itself change a normal `sync` exit code, although an accompanying failure to synchronize a selected resource does.
 
 ## 5. Discovery and capabilities
 
@@ -119,11 +141,22 @@ Resolve the configured root group and enumerate all descendant groups with pagin
 
 Complete discovery before making disappearance decisions. Group/project discovery failure must not be interpreted as an empty inventory. Lack of visibility limits the corpus to what the configured credentials can retrieve; record this scope.
 
+### 5.1 Generated selection catalog
+
+`discover` owns the generated `inventory` section of the user-supplied YAML configuration while preserving the hand-maintained settings around it. It must:
+
+1. Resolve and record the root group's global ID. If an existing catalog has a different root ID, refuse replacement unless the user explicitly requests root replacement; a path rename with the same ID is not a root change.
+2. Finish every required group and project page before constructing a replacement. A failed or partial traversal leaves the original file byte-for-byte unchanged and must not be presented as authoritative empty discovery.
+3. Merge existing selections by `(object kind, GitLab global ID)`, never by mutable path or list position. Update paths for matching IDs, preserve each project's `repository`, `wiki`, and `work_items` flags, and preserve each group's independent `wiki` flag.
+4. Add newly discovered projects with all three component selections set to `false`, and newly discovered root/descendant groups with `wiki: false`. Sort generated entries deterministically by stable ID, with paths retained as display metadata.
+5. Remove catalog entries absent from a complete authoritative refresh. Write the complete YAML to a temporary file in the same directory, flush it, and atomically replace the original so readers see either the old or new complete configuration.
+
+Normal `sync` performs a read-only live inventory comparison against the generated catalog without refreshing it. Report added, absent, renamed, and path-reused groups/projects in logs, run status, and the manifest, with an actionable warning to run `gl-groupsync discover --config <path>` and review selection flags. Continue synchronizing valid selected resources. Newly observed projects and group wikis remain unselected and are not synchronized until discovery writes them with disabled defaults and the user enables them. Drift warnings alone are non-blocking and produce exit code `0`; discovery or selected-resource operational failures continue to use the exit codes in section 4.
+
 Group wiki behavior:
 
-- `disabled`: no group wiki requests; report configured exclusion, not an error.
-- `auto`: attempt available group wiki discovery/export and record per-group results. Unavailable features do not fail the entire run. Do not infer an instance-wide lack of support from a single 404.
-- `enabled`: expect support; inaccessible/unavailable group wikis are reported as partial failures while other components continue.
+- Every discovered root or descendant group has its own `wiki` selection flag; groups without projects are included. `false` makes no wiki requests and is reported as a configured exclusion, not an error.
+- `true` requests discovery/export for that group only. An inaccessible or unavailable selected group wiki is a partial failure while other groups and project components continue. Do not infer an instance-wide lack of support from a single 404.
 - Distinguish observed HTTP status and evidence from inferred cause: 404 can mean missing, hidden or unsupported; an empty successful response is different from an authorization or network failure.
 - Verify the actual group-wiki clone URL convention/API on a supported test instance. Do not assume it matches project wiki URL construction. Keep the same searchable Markdown/source-file result if a documented API export is needed.
 
@@ -133,7 +166,7 @@ Record server version when available, tested capability coverage, and unavailabl
 
 Treat the repository and wiki as independent resources with separate status, revision and last-success timestamps.
 
-For each resource:
+For each selected resource:
 
 1. Discover its current remote default branch (project API metadata for the project, Git remote HEAD as appropriate for a wiki). Never hard-code `main` or `master` or assume the wiki uses the project's branch.
 2. For a first import, clone into managed staging and publish only after successful checkout. Failed staging must not become a searchable partial repository.
@@ -142,7 +175,7 @@ For each resource:
 5. Skip unnecessary checkout if the target revision is unchanged. Keep incremental Git objects/history; a comprehensive mirror of all refs is not required.
 6. Record the successful commit, branch and check time only after success. Prevent automatic LFS smudging and submodule recursion in version 1.
 
-An empty project or a disabled/empty wiki is a legitimate outcome, not a generic failure. Distinguish confirmed emptiness from inaccessible/uninitialized wiki endpoints wherever possible; otherwise record the ambiguity. If a formerly populated resource becomes conclusively empty/disabled, move its old searchable content to stale storage. Transient failures retain the prior content and mark it stale in metadata.
+An empty selected project or an empty wiki is a legitimate outcome, not a generic failure. An unselected component receives no resource request and is reported as excluded by configuration. Distinguish confirmed emptiness from inaccessible/uninitialized wiki endpoints wherever possible; otherwise record the ambiguity. If a formerly populated resource becomes conclusively empty or is disabled by a reviewed selection change, move its old searchable content to stale storage. Transient failures retain the prior content and mark it stale in metadata.
 
 In-place updates to existing clean Git checkouts are acceptable: no corpus-wide snapshot guarantee is required. A concurrent search may see files changing. Document this and expose run status. If checkout itself fails or is interrupted, mark the resource inconsistent until validated/recovered; do not claim its tree still matches the last successful revision. Fetch failures alone leave the last checkout intact.
 
@@ -150,7 +183,7 @@ In-place updates to existing clean Git checkouts are acceptable: no corpus-wide 
 
 ### 7.1 Coverage and API selection
 
-Export accessible project issues and tasks, including closed items and items in archived projects. Confidential items are included only to the extent allowed by the configured credentials; retain their confidentiality flag. Group aggregation must not duplicate project items.
+For projects whose `work_items` selection is enabled, export accessible issues and tasks, including closed items and items in archived projects. Confidential items are included only to the extent allowed by the configured credentials; retain their confidentiality flag. Group aggregation must not duplicate project items.
 
 Start with REST Issues and Discussions APIs. Current documentation lists `task` among issue types, but the implementing agent must verify actual issue/task discovery, discussion coverage and parent-child relationships on the tested current CE instance. Use GraphQL for missing supported fields/relationships where needed. Do not assume one REST list covers every modern work-item type or silently report complete coverage when tasks are missing.
 
@@ -201,9 +234,9 @@ On one resource failure, continue other resources, including the same project's 
 
 ## 9. Disappearance, quarantine, and retention
 
-After a complete authoritative inventory for a scope, move previously known but absent managed objects into `stale/` with their IDs, prior source paths and reason. Absence can mean deletion, moved scope or lost visibility; do not claim to know which without evidence.
+After a complete authoritative live inventory for a scope, move previously known but absent managed objects into `stale/` with their IDs, prior source paths and reason. Absence can mean deletion, moved scope or lost visibility; do not claim to know which without evidence. This corpus quarantine is independent of configuration refresh: normal `sync` may quarantine only from a complete live inventory but never rewrites the YAML catalog, while `discover` removes absent catalog entries only as part of its complete atomic refresh.
 
-Never automatically delete quarantined content in version 1. Do not touch unrelated files. A temporary fetch/API failure for a still-discovered resource retains its current content with an error status instead of treating it as disappeared. Restore a reappearing object by stable identity when safe.
+Never automatically delete quarantined content in version 1. Do not touch unrelated files. A temporary fetch/API failure for a still-discovered resource retains its current content with an error status instead of treating it as disappeared. Restore a reappearing object by stable identity when safe. A reappearing catalog entry that was removed by an earlier complete discovery is new for selection purposes and therefore defaults to disabled, even if stale corpus state can be restored by ID after the user re-enables it.
 
 Quarantine decisions for work items require a complete full item inventory; incremental lists are never sufficient. A failed or partial group/project traversal cannot quarantine projects/groups. Disabling an exporter in configuration should be reflected in coverage and must not silently present previously exported content as fresh.
 
@@ -227,32 +260,34 @@ Use pytest unit/integration tests, a local fake GitLab HTTP service and temporar
 Required scenarios:
 
 1. Nested groups, groups with no projects, API pagination, archived projects, shared-project exclusion and ID deduplication.
-2. New repository import, incremental changes, deleted upstream files, no-op rerun, default-branch rename and force-push. No merges or pushes occur.
-3. Project wiki exists/empty/disabled/inaccessible; repository failure does not block wiki or vice versa. Wiki branch differs from project branch.
-4. CE with group wikis disabled emits no failure. Auto mode handles unavailable group wikis without inferring global support from one 404. Supported group wiki export is covered by fixtures; live licensed-instance testing is optional and must be reported honestly.
-5. Project/group rename or move, path reused by another ID, disappearance, quarantine, reappearance and interrupted relocation. Unmanaged directories are never overwritten.
-6. Discovery fails midway through pagination: no existing projects/groups are quarantined.
-7. Issue and child task with standalone comments and threaded replies; preserve relationships, IDs, authors, order and source links. Include closed items and archived-project items.
-8. Edit/delete a comment, including on a closed item, without advancing the parent's update timestamp in the fixture: full reconciliation repairs the local export.
-9. A later discussion page fails: the old complete Markdown remains; the item is retried even after other incremental progress succeeds.
-10. Overlapping timestamp windows do not duplicate items/comments. Interrupted/full partial runs recover and do not incorrectly advance full-success checkpoints.
-11. Missing-item quarantine occurs only after full successful enumeration, never from incremental omissions.
-12. Local modifications, failed checkout, timeout, interrupted clone/publication, lock contention and repeated authentication errors produce the specified outcomes.
-13. Token redaction, credential-free persisted remote URLs, TLS verification, path traversal/symlink rejection and invalid configuration handling.
-14. Deterministic Markdown renders: unchanged source content is not rewritten solely because it was rechecked. Raw JSON does not pollute normal corpus searches.
+2. Same-file discovery refresh preserves project-component and per-group wiki selections by global ID across renames, defaults every component of new/reappearing projects and new group wikis to disabled, removes absent entries only after complete discovery, rejects an unapproved root-ID change, orders entries deterministically, and atomically replaces the YAML without serializing secrets or transient overrides. A failed page leaves the original file byte-for-byte unchanged.
+3. Normal sync detects added, absent, renamed and path-reused inventory, emits an actionable discovery-refresh warning, records drift, continues valid selected work, does not rewrite YAML or sync newly observed disabled resources, and exits `0` when drift is the only warning.
+4. New repository import, incremental changes, deleted upstream files, no-op rerun, default-branch rename and force-push. No merges or pushes occur.
+5. Project wiki exists/empty/disabled/inaccessible; repository failure does not block wiki or vice versa. Wiki branch differs from project branch.
+6. CE with every group wiki unselected emits no failure and makes no group-wiki requests. A selected unavailable group wiki does not imply instance-wide lack of support and does not block other resources. Supported group wiki export is covered by fixtures; live licensed-instance testing is optional and must be reported honestly.
+7. Project/group rename or move, path reused by another ID, disappearance, quarantine, reappearance and interrupted relocation. Unmanaged directories are never overwritten.
+8. Discovery fails midway through pagination: the configuration remains unchanged and no existing projects/groups are quarantined.
+9. Issue and child task with standalone comments and threaded replies; preserve relationships, IDs, authors, order and source links. Include closed items and archived-project items.
+10. Edit/delete a comment, including on a closed item, without advancing the parent's update timestamp in the fixture: full reconciliation repairs the local export.
+11. A later discussion page fails: the old complete Markdown remains; the item is retried even after other incremental progress succeeds.
+12. Overlapping timestamp windows do not duplicate items/comments. Interrupted/full partial runs recover and do not incorrectly advance full-success checkpoints.
+13. Missing-item quarantine occurs only after full successful enumeration, never from incremental omissions.
+14. Local modifications, failed checkout, timeout, interrupted clone/publication, lock contention and repeated authentication errors produce the specified outcomes.
+15. Token redaction, credential-free persisted remote URLs, TLS verification, path traversal/symlink rejection and invalid configuration handling.
+16. Deterministic Markdown renders: unchanged source content is not rewritten solely because it was rechecked. Raw JSON does not pollute normal corpus searches.
 
 Acceptance requires documenting the exact live-tested GitLab version, supported item fields, task/discussion/relationship coverage, any fixture-only capabilities and limitations. Do not label untested modern work-item coverage as complete.
 
 ## 12. Implementation deliverables
 
-- Installable Python 3.13 package and Click command.
-- Example TOML configuration for CE, token/SSH/HTTPS setup instructions, and dependency/installation instructions.
+- Installable Python 3.13 package managed with `uv`, exposing the `gl-groupsync` Click command.
+- Bundled Onacol defaults/schema, a schema-free YAML template, a discovered same-file selection example for CE, token/SSH/HTTPS setup instructions, and `uv` dependency/installation instructions.
 - README describing first import, periodic incremental/full runs, status, quarantine, stale data and troubleshooting.
 - Example systemd service/timer and cron invocation; no automatic installation of system services.
 - Automated tests above and optional live integration test instructions.
-- A generated sample corpus from fixtures showing repositories, wikis, item conversations, metadata and manifest.
+- A generated sample corpus from fixtures showing selected repositories, wikis, item conversations, metadata and manifest.
 
-Implement in stages: discovery/state/CLI; repository and project wiki synchronization; work-item export and reconciliation; optional group wiki handling; recovery/search documentation and acceptance verification. Keep the interfaces ready for future merge-request or attachment exporters without implementing them in this version.
+Implement in stages: Click/Onacol YAML configuration; discovery and generated selection catalog; state/status/doctor; selected repository and project wiki synchronization; selected work-item export and reconciliation; selected per-group wiki handling; recovery/search documentation and acceptance verification. Keep the interfaces ready for future merge-request or attachment exporters without implementing them in this version.
 
 ## 13. Official references
 

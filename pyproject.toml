@@ -1,7 +1,7 @@
 [project]
 name = "gitlab_groupsync"
 version = "0.1.0"
-description = "Tool for syncing repositories, wikis and work item from GitLab groups (and subgroups). Useful for offffline agentic search."
+description = "Synchronize selected GitLab group repositories, wikis, and work items for offline reference search."
 authors = [
     { name = "Josef Nevrly", email = "josef.nevrly@gmail.com" }
 ]
@@ -18,12 +18,10 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    
     "click>=8.1.7,<9.0.0",
-    
-    
+    "httpx>=0.28,<1.0",
     "onacol>=0.3.5,<0.4.0",
-    
+    "ruamel-yaml>=0.17.40,<0.18.0",
 ]
 
 [project.urls]
@@ -32,7 +30,7 @@ Repository = "https://github.com/JNevrly/gitlab_groupsync"
 
 
 [project.scripts]
-gitlab_groupsync = "gitlab_groupsync.cli:main"
+gl-groupsync = "gitlab_groupsync.cli:main"
 
 
 [dependency-groups]
@@ -62,6 +60,11 @@ target-version = "py313"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]
 ignore = []
+
+[tool.pytest.ini_options]
+markers = [
+    "live: explicitly configured read-only tests against a disposable GitLab instance",
+]
 
 [build-system]
 requires = ["hatchling>=1.27.0"]

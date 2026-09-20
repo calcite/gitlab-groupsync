@@ -1,0 +1,12 @@
+{
+  "evidence": {
+    "evidence": "absent from complete fixture discovery",
+    "interpretation": "deletion, move, or lost visibility is unknown"
+  },
+  "fixture_data": true,
+  "object_id": 777,
+  "object_kind": "project",
+  "prior_source_path": "example-group/retired-project",
+  "quarantined_at": "2026-09-20T10:00:00+00:00",
+  "reason": "missing_from_scope"
+}
