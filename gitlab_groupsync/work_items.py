@@ -67,7 +67,7 @@ def _item_identity(item: Mapping[str, Any]) -> tuple[int, int, str, str, str]:
 
 
 def _project_url(web_url: str) -> str:
-    marker = "/-/issues/"
+    marker = "/-/"
     return (
         web_url.split(marker, 1)[0] if marker in web_url else web_url.rsplit("/", 2)[0]
     )
@@ -406,7 +406,13 @@ class WorkItemExporter:
                 self._export_item(
                     project_id, project_path, project_root, item, known_iids
                 )
-            except (DiscoveryError, StateError, OSError, ValueError) as exc:
+            except (
+                DiscoveryError,
+                StateError,
+                UnsafePathError,
+                OSError,
+                ValueError,
+            ) as exc:
                 self.store.enqueue_retry(scope, str(iid), "work_item", details=str(exc))
                 failures += 1
             else:
@@ -414,16 +420,28 @@ class WorkItemExporter:
                 exported += 1
 
         self.store.set_checkpoint(scope, "incremental", run_started_at)
+        quarantine_failures = 0
         if full:
-            self._quarantine_missing(
+            quarantine_failures = self._quarantine_missing(
                 project_id,
                 project_path,
                 {int(item["iid"]) for item in listed},
             )
+            failures += quarantine_failures
             if failures == 0:
                 self.store.set_checkpoint(scope, "full_success", run_started_at)
         status = "ok" if failures == 0 else "error"
         previous = self.store.get_resource("project", project_id, "work_items") or {}
+        if quarantine_failures:
+            last_error = (
+                f"{failures} work-item operation(s) failed, including "
+                f"{quarantine_failures} quarantine operation(s); retained content "
+                "will be retried on a later full reconciliation"
+            )
+        elif failures:
+            last_error = f"{failures} work-item operation(s) failed"
+        else:
+            last_error = None
         self.store.upsert_resource(
             "project",
             project_id,
@@ -434,9 +452,7 @@ class WorkItemExporter:
             if failures == 0
             else previous.get("last_success_at"),
             revision=str(len(self.store.work_items_for_project(project_id))),
-            last_error=None
-            if failures == 0
-            else f"{failures} work-item operation(s) failed",
+            last_error=last_error,
             retained_content=failures > 0 and bool(previous.get("last_success_at")),
             limitations=_LIMITATIONS,
         )
@@ -717,16 +733,21 @@ class WorkItemExporter:
 
     def _quarantine_missing(
         self, project_id: int, project_path: str, listed_iids: set[int]
-    ) -> None:
+    ) -> int:
         del project_path
+        failures = 0
         for item in self.store.work_items_for_project(project_id):
             if item["iid"] in listed_iids or item["missing_from_scope"]:
                 continue
-            self._quarantine_item(
-                item,
-                reason="absent_from_complete_full_listing",
-                evidence="complete issue/task listing omitted this stable ID",
-            )
+            try:
+                self._quarantine_item(
+                    item,
+                    reason="absent_from_complete_full_listing",
+                    evidence="complete issue/task listing omitted this stable ID",
+                )
+            except (OSError, StateError, UnsafePathError, ValueError):
+                failures += 1
+        return failures
 
     def _quarantine_item(
         self, item: Mapping[str, Any], *, reason: str, evidence: str

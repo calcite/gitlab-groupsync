@@ -22,6 +22,7 @@ def _item(
     state: str = "opened",
     updated: str = "2026-09-20T08:00:00+00:00",
 ) -> dict[str, Any]:
+    route = "work_items" if item_type == "task" else "issues"
     return {
         "id": 100 + iid,
         "iid": iid,
@@ -30,7 +31,7 @@ def _item(
         "title": f"Title {iid} ---\nmetadata: safe",
         "state": state,
         "description": "Description [upload](/uploads/a/file.txt)",
-        "web_url": f"https://git.example/root/app/-/issues/{iid}",
+        "web_url": f"https://git.example/root/app/-/{route}/{iid}",
         "author": {"id": 1, "name": "Author", "username": "author"},
         "assignees": [{"id": 2, "name": "Assigned", "username": "assigned"}],
         "labels": ["one", "two"],
@@ -79,7 +80,13 @@ class FakeWorkItemClient:
                     "notes": [_note(9, "changed state", system=True)],
                 },
             ),
-            2: (),
+            2: (
+                {
+                    "id": "task-note",
+                    "individual_note": True,
+                    "notes": [_note(4, "task [file](uploads/task-comment.txt)")],
+                },
+            ),
         }
 
     def iter_project_work_items(
@@ -111,7 +118,7 @@ class FakeWorkItemClient:
                     "iid": 2,
                     "project_id": 10,
                     "title": "Child",
-                    "web_url": "https://git.example/root/app/-/issues/2",
+                    "web_url": "https://git.example/root/app/-/work_items/2",
                     "link_type": "blocks",
                 },
             )
@@ -127,7 +134,7 @@ class FakeWorkItemClient:
                         "id": "gid://gitlab/WorkItem/102",
                         "iid": "2",
                         "title": "Child task",
-                        "webUrl": "https://git.example/root/app/-/issues/2",
+                        "webUrl": "https://git.example/root/app/-/work_items/2",
                     },
                 ),
             )
@@ -191,6 +198,10 @@ def test_issue_task_metadata_threads_relationships_and_deterministic_no_rewrite(
         assert "confidential: true" in task
         assert 'state: "closed"' in task
         assert "fixture hierarchy coverage only" in task
+        assert "https://git.example/root/app/-/work_items/2" in task
+        assert "https://git.example/root/app/-/uploads/a/file.txt" in task
+        assert "https://git.example/root/app/-/uploads/task-comment.txt" in task
+        assert "/-/-/uploads/" not in task
         raw = json.loads(raw_path.read_text())
         assert raw["item"]["id"] == 101
         assert "fetched_at" not in raw
@@ -704,6 +715,57 @@ def test_iid_reuse_by_different_global_id_quarantines_old_item(tmp_path: Path) -
         assert metadata["prior_raw_path"].endswith("/101.json")
         assert (destination / ".sync/raw/projects/10/work-items/101.json").exists()
         assert (destination / ".sync/raw/projects/10/work-items/999.json").exists()
+
+
+def test_failed_missing_item_quarantine_is_counted_and_retains_content(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "corpus"
+    client = FakeWorkItemClient([_item(1)])
+    with StateStore.initialize_destination(
+        destination, "https://git.example", 1
+    ) as store:
+        exporter = _exporter(client, store, destination)
+        root = destination / "content/projects/root/app"
+        first = exporter.sync_project(
+            10,
+            "root/app",
+            root,
+            force_full=True,
+            run_started_at="2026-09-20T08:00:00+00:00",
+        )
+        assert first.failures == 0
+        full_success = store.get_checkpoint("project:10:work-items", "full_success")
+        active = root / "work-items/1.md"
+        destination.joinpath("stale/work-items").write_text(
+            "blocks quarantine directories"
+        )
+        client.listed = []
+
+        result = exporter.sync_project(
+            10,
+            "root/app",
+            root,
+            force_full=True,
+            run_started_at="2026-09-20T09:00:00+00:00",
+        )
+
+        assert result.status == "error"
+        assert result.failures == 1
+        assert active.is_file()
+        state_item = store.work_item(10, 1)
+        assert state_item is not None
+        assert state_item["missing_from_scope"] is False
+        assert (
+            store.get_checkpoint("project:10:work-items", "full_success")
+            == full_success
+        )
+        resource = store.get_resource("project", 10, "work_items")
+        assert resource is not None
+        assert resource["retained_content"] is True
+        assert "1 quarantine operation(s)" in resource["last_error"]
+        assert "later full reconciliation" in resource["last_error"]
+        assert str(destination) not in resource["last_error"]
 
 
 def test_quarantine_rejects_persisted_path_outside_destination(tmp_path: Path) -> None:

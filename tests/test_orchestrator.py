@@ -849,6 +849,112 @@ def test_work_item_failure_and_path_failure_are_partial_but_do_not_block_reposit
         assert store.get_resource("project", 1, "work_items")["status"] == "error"
 
 
+def test_quarantine_failure_is_partial_and_other_project_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "corpus"
+    selections = [
+        _selection(1, "root/one", repository=False, wiki=False),
+        _selection(2, "root/two", repository=False, wiki=False),
+    ]
+    for selection in selections:
+        selection["work_items"] = True
+    config = _config(destination, selections)
+    live = _inventory((1, "root/one"), (2, "root/two"))
+    monkeypatch.setattr(orchestrator, "discover_inventory", lambda *a, **k: live)
+
+    def item(project_id: int, project_path: str) -> dict[str, Any]:
+        return {
+            "id": project_id * 100 + 1,
+            "iid": 1,
+            "project_id": project_id,
+            "issue_type": "issue",
+            "title": f"Project {project_id} item",
+            "state": "opened",
+            "description": "retained",
+            "web_url": f"https://git.example/{project_path}/-/issues/1",
+            "author": None,
+            "assignees": [],
+            "labels": [],
+            "milestone": None,
+            "confidential": False,
+            "created_at": "2026-09-19T08:00:00+00:00",
+            "updated_at": "2026-09-20T08:00:00+00:00",
+            "closed_at": None,
+        }
+
+    class WorkItemClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__({}, {})
+            self.items = {
+                1: [item(1, "root/one")],
+                2: [item(2, "root/two")],
+            }
+            self.listing_calls: list[int] = []
+
+        def iter_project_work_items(
+            self, project_id: int, *, updated_after: str | None = None
+        ):
+            del updated_after
+            self.listing_calls.append(project_id)
+            yield from self.items[project_id]
+
+        def project_issue(self, project_id: int, iid: int):
+            return next(
+                value for value in self.items[project_id] if value["iid"] == iid
+            )
+
+        def issue_discussions(self, project_id: int, iid: int):
+            del project_id, iid
+            return ()
+
+        def issue_links(self, project_id: int, iid: int):
+            del project_id, iid
+            return ()
+
+        def work_item_hierarchy(self, project_path: str, iid: int):
+            del project_path, iid
+            return WorkItemHierarchy(None, ())
+
+    client = WorkItemClient()
+    first = SyncOrchestrator(
+        config,
+        "secret",
+        client_factory=lambda *a, **k: client,  # type: ignore[arg-type]
+        git=FakeGit(),  # type: ignore[arg-type]
+    ).run()
+    assert first == 0
+
+    client.items[1] = []
+    destination.joinpath("stale/work-items").write_text("blocks quarantine directories")
+    calls_before = len(client.listing_calls)
+    second = SyncOrchestrator(
+        config,
+        "secret",
+        client_factory=lambda *a, **k: client,  # type: ignore[arg-type]
+        git=FakeGit(),  # type: ignore[arg-type]
+        full=True,
+    ).run()
+
+    assert second == 1
+    assert client.listing_calls[calls_before:] == [1, 2]
+    assert (destination / "content/projects/root/one/work-items/1.md").is_file()
+    assert (destination / "content/projects/root/two/work-items/1.md").is_file()
+    manifest = json.loads((destination / "manifest.json").read_text())
+    assert manifest["run_state"]["latest"]["outcome"] == "partial"
+    assert manifest["run_state"]["latest"]["exit_code"] == 1
+    with StateStore(destination / ".sync/state.sqlite3") as store:
+        failed = store.get_resource("project", 1, "work_items")
+        assert failed is not None
+        assert failed["status"] == "error"
+        assert failed["retained_content"] is True
+        assert "quarantine operation(s)" in failed["last_error"]
+        assert str(destination) not in failed["last_error"]
+        successful = store.get_resource("project", 2, "work_items")
+        assert successful is not None
+        assert successful["status"] == "ok"
+
+
 def test_project_workers_are_bounded_and_state_writes_remain_safe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
