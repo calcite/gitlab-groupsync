@@ -1,0 +1,27 @@
+{
+	"name": "Python 3.13",
+	"build": {
+		"dockerfile": "Dockerfile"
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"charliermarsh.ruff",
+				"sst-dev.opencode",
+				"anthropic.claude-code"
+			]
+		}
+	},
+	"remoteEnv": {
+		"OPENCODE_ENABLE_EXA": "true"
+	},
+    "mounts": [
+        "source=${localEnv:HOME}/.config/opencode,target=/root/.config/opencode,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.local/share/opencode,target=/root/.local/share/opencode,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.claude.json,target=/root/.claude.json,type=bind,consistency=cached"
+    ],
+"postCreateCommand": "if [ -f .backlog-config.yml ]; then git init && backlog init --defaults --backlog-dir backlog --config-location folder --task-prefix task --zero-padded-ids 3 --check-branches false --include-remote false --branch-days 30 --bypass-git-hooks true --web-port 6420 --auto-open-browser false --integration-mode cli --agent-instructions agents && mv .backlog-config.yml backlog/config.yml; fi && uv sync --group dev"
+}

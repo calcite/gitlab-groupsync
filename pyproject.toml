@@ -1,0 +1,71 @@
+[project]
+name = "gitlab_groupsync"
+version = "0.1.0"
+description = "Tool for syncing repositories, wikis and work item from GitLab groups (and subgroups). Useful for offffline agentic search."
+authors = [
+    { name = "Josef Nevrly", email = "josef.nevrly@gmail.com" }
+]
+license = { text = "MIT license" }
+readme = "README.md"
+requires-python = ">=3.13"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    
+    
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    
+    "click>=8.1.7,<9.0.0",
+    
+    
+    "onacol>=0.3.5,<0.4.0",
+    
+]
+
+[project.urls]
+Homepage = "https://github.com/JNevrly/gitlab_groupsync"
+Repository = "https://github.com/JNevrly/gitlab_groupsync"
+
+
+[project.scripts]
+gitlab_groupsync = "gitlab_groupsync.cli:main"
+
+
+[dependency-groups]
+dev = [
+    "tox>=4.34.0,<5.0.0",
+    "coverage[toml]>=7.4,<8.0.0",
+    "ruff>=0.14.0,<0.15.0",
+
+    "pytest>=9.0,<10.0.0",
+    "pytest-cov>=4.1,<5.0.0",
+
+    "mypy>=1.19,<2.0.0",
+]
+
+[tool.coverage.run]
+omit = [".*", "*/site-packages/*"]
+source = ["gitlab_groupsync"]
+relative_files = true
+
+[tool.coverage.report]
+fail_under = 100
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = []
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gitlab_groupsync"]
