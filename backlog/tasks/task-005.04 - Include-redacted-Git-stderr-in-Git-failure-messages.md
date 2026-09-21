@@ -1,11 +1,11 @@
 ---
 id: TASK-005.04
 title: Include redacted Git stderr in Git failure messages
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 11:08'
-updated_date: '2026-09-20 12:08'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies: []
 parent_task_id: TASK-005

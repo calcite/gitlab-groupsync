@@ -1,11 +1,11 @@
 ---
 id: TASK-001.07
 title: Export selected group and subgroup wikis
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 07:47'
-updated_date: '2026-09-20 09:23'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies:
   - TASK-001.04

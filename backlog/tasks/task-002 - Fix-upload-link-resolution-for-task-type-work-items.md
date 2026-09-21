@@ -1,11 +1,11 @@
 ---
 id: TASK-002
 title: Fix upload-link resolution for task-type work items
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 11:07'
-updated_date: '2026-09-20 11:27'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies: []
 references:
@@ -55,6 +55,16 @@ Confirmed the defect in gitlab_groupsync/work_items.py: _project_url only recogn
 Implemented project-base extraction at the shared GitLab /-/ route boundary. Task fixtures now use /-/work_items/<iid>, including relationship URLs, and task description/comment uploads are asserted alongside unchanged issue behavior.
 Validation: uv run tox passed (196 tests, 100% coverage, Ruff lint/format, and mypy). No known limitations or follow-up work; no ADR was needed.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: Human
+created: 2026-09-21 05:52
+---
+The human confirmed the tool is working as expected and requested closure of every task that was in Review, including this task.
+---
+<!-- COMMENTS:END -->
 
 ## Final Summary
 

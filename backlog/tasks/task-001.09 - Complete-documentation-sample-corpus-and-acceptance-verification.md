@@ -1,11 +1,11 @@
 ---
 id: TASK-001.09
 title: 'Complete documentation, sample corpus, and acceptance verification'
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 07:47'
-updated_date: '2026-09-20 10:15'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies:
   - TASK-001.08

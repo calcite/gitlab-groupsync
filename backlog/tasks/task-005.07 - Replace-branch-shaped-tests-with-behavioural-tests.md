@@ -1,11 +1,11 @@
 ---
 id: TASK-005.07
 title: Replace branch-shaped tests with behavioural tests
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 11:08'
-updated_date: '2026-09-20 12:21'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies:
   - TASK-002

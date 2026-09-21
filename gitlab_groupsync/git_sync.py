@@ -69,6 +69,7 @@ class GitRunner:
         cwd: Path | None = None,
         token: str | None = None,
         resource_key: str | None = None,
+        safe_directory: Path | None = None,
     ) -> GitOutput:
         if token and any(token in value for value in args):
             raise GitSyncError("refusing token-bearing Git arguments")
@@ -78,8 +79,10 @@ class GitRunner:
             "submodule.recurse=false",
             "-c",
             "credential.helper=",
-            *args,
         ]
+        if safe_directory is not None:
+            command.extend(("-c", f"safe.directory={safe_directory.absolute()}"))
+        command.extend(args)
         environment = os.environ.copy()
         environment.update(
             {
@@ -238,12 +241,14 @@ class GitResourceSynchronizer:
                     "--untracked-files=all",
                 ],
                 resource_key=resource_key,
+                safe_directory=destination,
             )
             if status.stdout:
                 raise LocalConflictError("local tracked or untracked changes detected")
             self.runner.run(
                 ["-C", str(destination), "remote", "set-url", "origin", remote],
                 resource_key=resource_key,
+                safe_directory=destination,
             )
             self.runner.run(
                 [
@@ -257,11 +262,13 @@ class GitResourceSynchronizer:
                 ],
                 token=token,
                 resource_key=resource_key,
+                safe_directory=destination,
             )
             revision = self._revision(destination, resource_key)
             current = self.runner.run(
                 ["-C", str(destination), "rev-parse", "--verify", "HEAD"],
                 resource_key=resource_key,
+                safe_directory=destination,
             )
             if current.stdout.strip() == revision:
                 return GitResourceResult("ok", revision, branch)
@@ -276,6 +283,7 @@ class GitResourceSynchronizer:
                         revision,
                     ],
                     resource_key=resource_key,
+                    safe_directory=destination,
                 )
             except GitSyncError as exc:
                 raise GitSyncError(
@@ -292,6 +300,7 @@ class GitResourceSynchronizer:
             self.runner.run(
                 ["-C", str(staging), "remote", "add", "origin", remote],
                 resource_key=resource_key,
+                safe_directory=staging,
             )
             self.runner.run(
                 [
@@ -305,11 +314,13 @@ class GitResourceSynchronizer:
                 ],
                 token=token,
                 resource_key=resource_key,
+                safe_directory=staging,
             )
             revision = self._revision(staging, resource_key)
             self.runner.run(
                 ["-C", str(staging), "checkout", "--detach", revision],
                 resource_key=resource_key,
+                safe_directory=staging,
             )
             marker = staging / ".git" / "gitlab-groupsync"
             with marker.open("w", encoding="utf-8") as output:
@@ -359,4 +370,5 @@ class GitResourceSynchronizer:
         return self.runner.run(
             ["-C", str(checkout), "rev-parse", "refs/remotes/origin/gl-groupsync"],
             resource_key=resource_key,
+            safe_directory=checkout,
         ).stdout.strip()

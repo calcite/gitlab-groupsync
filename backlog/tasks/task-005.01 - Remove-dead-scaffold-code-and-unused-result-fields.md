@@ -1,11 +1,11 @@
 ---
 id: TASK-005.01
 title: Remove dead scaffold code and unused result fields
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 11:08'
-updated_date: '2026-09-20 12:01'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies: []
 parent_task_id: TASK-005

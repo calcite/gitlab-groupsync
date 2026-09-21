@@ -84,6 +84,8 @@ class FakeDoctorClient:
 
 
 def _git_success(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    if args[0][0] == "ssh":
+        return subprocess.CompletedProcess(args[0], 0, "", "OpenSSH_9.2p1\n")
     return subprocess.CompletedProcess(args[0], 0, "git version 2.47.3\n", "")
 
 
@@ -107,6 +109,7 @@ def test_doctor_success_metadata_capabilities_and_custom_ca(
     assert report.healthy is True
     checks = _checks(report)
     assert checks["git"].detail == "git version 2.47.3"
+    assert checks["ssh"].detail == "OpenSSH_9.2p1"
     assert checks["tls"].detail == "verified with custom CA ca.pem"
     assert checks["server_metadata"].detail == "metadata: 18.4.0"
     assert checks["requested_capabilities"].detail.startswith("3 selected")
@@ -142,6 +145,42 @@ def test_doctor_metadata_fallback_and_absence_are_healthy(
     )
     assert report.healthy is True
     assert "unavailable" in _checks(report)["server_metadata"].detail
+
+
+def test_doctor_checks_ssh_only_for_ssh_transport(
+    doctor_config: dict[str, Any],
+) -> None:
+    commands: list[str] = []
+
+    def missing_ssh(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(args[0][0])
+        if args[0][0] == "ssh":
+            raise FileNotFoundError
+        return subprocess.CompletedProcess(args[0], 0, "git version 2.47.3\n", "")
+
+    report = run_doctor(
+        doctor_config,
+        "token",
+        client_factory=FakeDoctorClient,
+        git_runner=missing_ssh,
+    )
+    assert _checks(report)["ssh"] == DiagnosticCheck(
+        "ssh", False, "SSH executable unavailable"
+    )
+    assert report.healthy is False
+    assert commands == ["git", "ssh"]
+
+    doctor_config["gitlab"]["git_transport"] = "https"
+    commands.clear()
+    report = run_doctor(
+        doctor_config,
+        "token",
+        client_factory=FakeDoctorClient,
+        git_runner=missing_ssh,
+    )
+    assert "ssh" not in _checks(report)
+    assert report.healthy is True
+    assert commands == ["git"]
 
 
 def test_doctor_git_auth_tls_discovery_and_capability_failures(

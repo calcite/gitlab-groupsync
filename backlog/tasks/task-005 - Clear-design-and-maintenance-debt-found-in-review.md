@@ -1,11 +1,11 @@
 ---
 id: TASK-005
 title: Clear design and maintenance debt found in review
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 11:08'
-updated_date: '2026-09-20 12:22'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies: []
 documentation:
@@ -49,6 +49,16 @@ Detail: comment #2 on TASK-001 and `docs/CODE_REVIEW_2026-09-20.html`.
 All seven subtasks are in Review with every acceptance criterion checked. ADR 0002 records the first-release SQLite baseline; pre-release schema versions 2-5 require destination recreation.
 Final validation: uv run tox passed 232 tests at 100.00% coverage, Ruff check, Ruff format --check, and mypy. git diff --check also passed.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: Human
+created: 2026-09-21 05:52
+---
+The human confirmed the tool is working as expected and requested closure of every task that was in Review, including this parent and its reviewed subtasks.
+---
+<!-- COMMENTS:END -->
 
 ## Final Summary
 

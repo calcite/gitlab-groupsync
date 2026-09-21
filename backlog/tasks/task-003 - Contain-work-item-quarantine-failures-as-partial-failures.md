@@ -1,11 +1,11 @@
 ---
 id: TASK-003
 title: Contain work-item quarantine failures as partial failures
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 11:07'
-updated_date: '2026-09-20 11:27'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies: []
 references:
@@ -60,6 +60,16 @@ Confirmed _quarantine_missing runs outside containment and _quarantine_item can 
 Implemented per-item quarantine containment and failure counting. Missing-item quarantine failures now produce a redacted resource error, retain active content, leave full-success unchanged, and return normally; unsafe replacement quarantine errors also enter item-level containment. The orchestration regression performs two real project exports, induces one quarantine path failure, and verifies the other project continues with exit code 1/outcome partial.
 Validation: uv run tox passed (196 tests, 100% coverage, Ruff lint/format, and mypy). Existing CLI partial-exit coverage plus the non-propagating orchestration test verifies no traceback path remains. No known limitations or follow-up work; no ADR was needed.
 <!-- SECTION:NOTES:END -->
+
+## Comments
+
+<!-- COMMENTS:BEGIN -->
+author: Human
+created: 2026-09-21 05:52
+---
+The human confirmed the tool is working as expected and requested closure of every task that was in Review, including this task.
+---
+<!-- COMMENTS:END -->
 
 ## Final Summary
 

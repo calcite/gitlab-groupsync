@@ -2,7 +2,8 @@ FROM python:3.13-slim
 
 # Install git and other dependencies
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash ca-certificates curl git \
+    && apt-get install -y --no-install-recommends \
+        bash ca-certificates curl git openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv

@@ -1,11 +1,11 @@
 ---
 id: TASK-001.06
 title: 'Export selected issues, tasks, and conversations'
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 07:46'
-updated_date: '2026-09-20 09:10'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies:
   - TASK-001.04

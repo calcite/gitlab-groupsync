@@ -1,11 +1,11 @@
 ---
 id: TASK-005.03
 title: Collapse speculative state schema migrations
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-09-20 11:08'
-updated_date: '2026-09-20 12:05'
+updated_date: '2026-09-21 05:52'
 labels: []
 dependencies: []
 documentation:

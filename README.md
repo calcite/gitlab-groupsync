@@ -120,8 +120,15 @@ For `git_transport: https`, credentials are supplied through a temporary
 noninteractive askpass helper and are not stored in remotes. For
 `git_transport: ssh`, configure the service account's SSH identity and
 `known_hosts` in advance; Git uses `BatchMode=yes`, preserves host-key
-verification, and does not prompt. Test the identity outside the corpus before
-scheduling.
+verification, and does not prompt. The separate `ssh` executable must be
+installed; `doctor` checks for it only when SSH transport is selected. Test the
+identity outside the corpus before scheduling.
+
+Containers should run with a UID that owns the destination. On bind-mounted or
+UID-mapped filesystems, the synchronizer supplies Git with only the exact
+application-created or marker-validated repository path as a command-scoped
+`safe.directory`; it never changes global Git configuration or trusts a
+wildcard path.
 
 TLS verification is always enabled. For a private CA, set an absolute PEM bundle:
 
@@ -259,7 +266,9 @@ GitLab.
 - **Custom CA failure:** verify that `ca_bundle` is a readable PEM chain and run
   doctor as the same account used by the scheduler.
 - **SSH prompt/failure:** pre-populate `known_hosts`, load a noninteractive key,
-  and verify repository read access for the service account.
+  install an SSH client, and verify repository read access for the service
+  account. Alternatively, select `git_transport: https` and grant the token
+  read-repository access.
 - **HTTPS failure:** verify API plus repository scopes; persisted remotes must not
   contain credentials.
 

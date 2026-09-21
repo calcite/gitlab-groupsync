@@ -120,6 +120,22 @@ def run_doctor(
     checks.append(DiagnosticCheck("git", git_ok, detail))
 
     gitlab = config["gitlab"]
+    if gitlab["git_transport"] == "ssh":
+        try:
+            result = git_runner(
+                ["ssh", "-V"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            ssh_ok = result.returncode == 0
+            version = (result.stderr or result.stdout).strip()
+            detail = version if ssh_ok and version else "SSH executable unavailable"
+        except (OSError, subprocess.SubprocessError):
+            ssh_ok, detail = False, "SSH executable unavailable"
+        checks.append(DiagnosticCheck("ssh", ssh_ok, detail))
+
     sync = config["sync"]
     try:
         client_context = client_factory(

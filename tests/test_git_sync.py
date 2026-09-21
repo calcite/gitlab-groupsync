@@ -86,6 +86,24 @@ def test_real_initial_incremental_noop_delete_rename_and_force_push(
     assert _run("remote", "get-url", "origin", cwd=checkout) == str(remote)
 
 
+def test_runner_scopes_safe_directory_for_different_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.geteuid() != 0:
+        pytest.skip("changing repository ownership requires root")
+    monkeypatch.delenv("SUDO_UID", raising=False)
+    repository = tmp_path / "uid-mapped"
+    _run("init", str(repository))
+    for path in (repository, *repository.rglob("*")):
+        os.chown(path, 1000, -1)
+
+    runner = GitRunner(5)
+    with pytest.raises(GitSyncError, match="dubious ownership"):
+        runner.run(["-C", str(repository), "status"])
+    output = runner.run(["-C", str(repository), "status"], safe_directory=repository)
+    assert "On branch" in output.stdout
+
+
 def test_remote_head_empty_wiki_branch_and_local_conflicts(tmp_path: Path) -> None:
     remote, _ = _remote(tmp_path, "wiki-home")
     syncer = GitResourceSynchronizer(GitRunner(5), tmp_path / "staging")
@@ -270,11 +288,14 @@ def test_runner_timeout_kills_group_and_https_secret_is_redacted(
     )
     inspect.chmod(0o700)
     output = GitRunner(2, executable=str(inspect), ca_bundle="/safe/ca.pem").run(
-        ["fetch", "https://git.example/repo.git"], token="top-secret"
+        ["fetch", "https://git.example/repo.git"],
+        token="top-secret",
+        safe_directory=tmp_path / "managed repository",
     )
     assert "top-secret" not in output.stdout
     assert "[REDACTED]" in output.stdout
     assert "1|0|ssh -o BatchMode=yes|/safe/ca.pem" in output.stdout
+    assert f"safe.directory={tmp_path / 'managed repository'}" in output.stdout
     assert "top-secret" not in repr(output)
     with pytest.raises(GitSyncError, match="token-bearing Git arguments"):
         GitRunner(2, executable=str(inspect)).run(
