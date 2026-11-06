@@ -155,9 +155,11 @@ class GitLabClient:
         if self._owns_client:
             self._client.close()
 
-    def get_object(self, endpoint: str) -> Mapping[str, Any]:
+    def get_object(
+        self, endpoint: str, params: Mapping[str, str | int | bool] | None = None
+    ) -> Mapping[str, Any]:
         """Retrieve and validate one JSON object."""
-        response = self._request(endpoint, {})
+        response = self._request(endpoint, params or {})
         try:
             value = response.json()
         except ValueError as exc:
@@ -167,6 +169,23 @@ class GitLabClient:
         if not isinstance(value, dict):
             raise DiscoveryError(f"GitLab returned an invalid object for {endpoint}")
         return value
+
+    def project_lfs_objects(self, project_id: int) -> bool | None:
+        """Return stored-object evidence, or unknown when statistics are hidden."""
+        value = self.get_object(f"projects/{project_id}", {"statistics": True})
+        if _parse_object(value, "project").id != project_id:
+            raise DiscoveryError("GitLab returned mismatched project LFS statistics")
+        statistics = value.get("statistics")
+        if statistics is None:
+            return None
+        if not isinstance(statistics, dict):
+            raise DiscoveryError("GitLab returned invalid project LFS statistics")
+        size = statistics.get("lfs_objects_size")
+        if size is None:
+            return None
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise DiscoveryError("GitLab returned invalid project LFS statistics")
+        return size > 0
 
     def get_optional_object(self, endpoint: str) -> Mapping[str, Any] | None:
         """Retrieve an object from an endpoint that may not exist on this server."""

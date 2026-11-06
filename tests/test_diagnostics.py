@@ -183,6 +183,40 @@ def test_doctor_checks_ssh_only_for_ssh_transport(
     assert commands == ["git"]
 
 
+@pytest.mark.parametrize("outcome", ["available", "missing", "error", "timeout"])
+def test_doctor_checks_lfs_only_when_selected(
+    doctor_config: dict[str, Any], outcome: str
+) -> None:
+    commands: list[list[str]] = []
+    FakeDoctorClient.failure = None
+    FakeDoctorClient.probe_status = {}
+
+    def runner(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(args)
+        if args == ["git", "lfs", "version"]:
+            if outcome == "missing":
+                raise FileNotFoundError
+            if outcome == "timeout":
+                raise subprocess.TimeoutExpired(args, 10)
+            return subprocess.CompletedProcess(
+                args, 1 if outcome == "error" else 0, "git-lfs/3.6.1\n", ""
+            )
+        return _git_success(args, **kwargs)
+
+    doctor_config["inventory"]["projects"][0]["lfs"] = False
+    report = run_doctor(
+        doctor_config, "token", client_factory=FakeDoctorClient, git_runner=runner
+    )
+    assert "git_lfs" not in _checks(report)
+    assert ["git", "lfs", "version"] not in commands
+    doctor_config["inventory"]["projects"][0]["lfs"] = True
+    report = run_doctor(
+        doctor_config, "token", client_factory=FakeDoctorClient, git_runner=runner
+    )
+    assert _checks(report)["git_lfs"].ok is (outcome == "available")
+    assert report.healthy is (outcome == "available")
+
+
 def test_doctor_git_auth_tls_discovery_and_capability_failures(
     doctor_config: dict[str, Any],
 ) -> None:

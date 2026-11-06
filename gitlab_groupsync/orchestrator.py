@@ -320,7 +320,9 @@ class SyncOrchestrator:
             return failures
 
         if selection["repository"]:
-            failures += self._sync_repository(store, base, details)
+            failures += self._sync_repository(
+                store, base, details, lfs=selection.get("lfs", False)
+            )
         else:
             self._record_disabled(store, details.id, "repository")
         if selection["wiki"]:
@@ -399,7 +401,12 @@ class SyncOrchestrator:
         return failures
 
     def _sync_repository(
-        self, store: StateStore, base: Path, details: ProjectDetails
+        self,
+        store: StateStore,
+        base: Path,
+        details: ProjectDetails,
+        *,
+        lfs: bool = False,
     ) -> int:
         attempted = utc_now()
         if details.empty_repository or details.default_branch is None:
@@ -432,6 +439,7 @@ class SyncOrchestrator:
                 token=self.token
                 if self.config["gitlab"]["git_transport"] == "https"
                 else None,
+                lfs=lfs,
             )
         except LocalConflictError as exc:
             self._record_failure(

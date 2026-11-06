@@ -2,16 +2,40 @@
 
 ## Validation Status
 
-The implementation is **not live-tested**. No disposable GitLab instance or
-GitLab version was provided, so no exact live-tested version can be recorded.
-All GitLab API capability statements below are fixture-only evidence from local
-HTTP fakes plus production-shaped payloads. Tests also use temporary real Git
-repositories, but those do not validate a GitLab server version.
+On **2026-11-05**, the human confirmed that LFS fetching and the overall system
+work against `https://gitext.alps.cz`, root group `1189` (`zero-iot`). This is
+human-confirmed operational validation. The human subsequently supplied doctor
+output identifying GitLab **19.5.3** (`server_metadata: metadata: 19.5.3`), Git
+2.47.3 and Git LFS 3.6.1, with TLS verification and authentication passing and
+discovery reporting 7 groups and 68 projects. A subsequent human-run read-only
+query verified the current hierarchy query for a known parent/child pair in both
+directions. The edition remains unreported.
 
-Do not infer compatibility with an unspecified "latest" GitLab release. Before
-production use, run the read-only doctor and the optional live contract in
-[`LIVE_TESTING.md`](LIVE_TESTING.md) against a disposable instance, record its
-exact version, and update this report with observed differences.
+The inspected local manifest (`temp/zero-iot/manifest.json`, run 5, finished
+`2026-11-05T09:07:23+00:00`) records 142 resources: **92 ok, 27 empty, 21 disabled,
+and 2 local conflicts**, with no error or unavailable states. The successful
+resources comprise 38 repositories, 9 project wikis, and 45 work-item exports.
+`zero-iot/0mt-certification` now has an `ok` repository checkout on `master`,
+revision `37219f3c4a2657f9dba7a163f148d7dbc3840363`. The run remains partial
+(exit 1) because local changes were preserved in `zero-iot/aws-lambdas` and
+`zero-iot/0mt-manufacturing/0mt-eol-deployment`; these conflicts do not invalidate
+the successful LFS validation. This manifest is local operational evidence, not
+a checked-in fixture.
+
+Automated API coverage below uses local HTTP fakes and production-shaped
+payloads, supplemented by real local Git/LFS repositories and the live
+observations above. No disposable GitLab instance was supplied; the human
+explicitly approved the existing instance and known issue pair for TASK-004.
+Group wikis remain separately untested on a licensed instance. Do not infer
+support for every GitLab version or capability from this run; see
+[`LIVE_TESTING.md`](LIVE_TESTING.md).
+
+The subsequent doctor output reports 11 selected project wikis as unavailable
+(IDs 813, 981, 1141, 1159, 1256, 1264, 1274, 1284, 1311, 1341 and 1373).
+All 11 are recorded as `disabled`, with no error, by the inspected sync manifest.
+Doctor currently probes every selected wiki endpoint and fails non-200 responses,
+while sync recognizes server-disabled wikis from project details and treats them
+as expected disabled resources. These diagnostics do not indicate LFS failure.
 
 ## Discovery And Git
 
@@ -28,9 +52,30 @@ Fixture coverage includes:
 - detached selected-branch checkouts, force-push, branch rename, upstream file
   deletion, no-op update, local conflict, timeout, and credential-free remote.
 
-Only the selected default branch is materialized. Other refs, submodule content,
-and Git LFS payloads are not synchronized. Project wiki remotes use GitLab's
-documented sibling `.wiki.git` convention; this was not verified live.
+Only the selected default branch is materialized. Other refs and submodule
+content are not synchronized. Project wiki remotes use GitLab's documented
+sibling `.wiki.git` convention; the observed run includes 9 successful project
+wiki checkouts.
+
+Git LFS is optional per project and defaults off. Discovery offers `lfs: false`
+only on positive `statistics.lfs_objects_size` evidence from the Projects API;
+`lfs_enabled` alone is insufficient. Statistics require Reporter-level access.
+Missing statistics are unknown, preserving existing intent without adding an
+option; zero removes the option. Storage statistics are project-wide and may lag
+changes or include historical files, rather than describing only the default
+branch. The human confirmed working LFS downloads after discovery exposed
+per-project options. This confirms the operational path on their instance;
+version-specific statistics/authorization edge cases remain fixture-tested.
+
+Real Git LFS 3.6.1 local-repository tests cover exact-commit downloads, initial
+staged hydration, enabling at an unchanged revision, incremental updates,
+override of recent/path download settings, local conflict preservation,
+missing-object failure/retry, and stopping downloads while retaining caches.
+Local HTTP batch/transfer fixtures verify real Git LFS askpass authentication,
+token redaction, credential-free persisted remotes, and retry after denial.
+Automatic smudging is always disabled. Explicit LFS hydration belongs to the
+repository resource, not a separate resource. Other refs/history are not fetched
+as LFS payloads, and downloaded binary content is not text-extracted or indexed.
 
 ## Issues, Tasks, And Conversations
 
@@ -55,6 +100,33 @@ Parent/child coverage uses the narrowly scoped GraphQL
 `WorkItemWidgetHierarchy` parent and paginated children fields: `id`, `iid`,
 `title`, and `webUrl`. GraphQL schema errors or absent widgets degrade to an
 explicit limitation; hierarchy completeness is not claimed.
+
+The inspected live-run cache contains 408 work-item snapshots: 75 contain an
+extracted hierarchy parent and 18 contain extracted hierarchy children (75 child
+edges). For example, `zero-iot/lambda_api` issue 15 has a child and issue 16 has a
+parent. These are application-extracted results, not verbatim GraphQL response
+envelopes.
+
+The human subsequently ran the exact current GraphQL query and confirmed in
+GitLab that `zero-iot/lambda_api` issue **16 is the child of 15**. Both responses
+are retained under [`live-evidence/gitlab-19.5.3/`](live-evidence/gitlab-19.5.3/):
+
+- Issue 15: `parent: null`, one child with IID `16` and global ID
+  `gid://gitlab/WorkItem/4013`.
+- Issue 16: parent IID `15`, global ID `gid://gitlab/WorkItem/3816`, no children.
+- Both return `data.namespace.workItem.widgets`, with empty objects for
+  unselected widget types, a hierarchy widget, and no GraphQL errors.
+- Both child connections have `hasNextPage: false`; issue 15 has non-null
+  `endCursor: "MQ"`, which does not require another page when `hasNextPage` is
+  false. Multi-page behavior remains covered by synthetic pagination fixtures.
+
+Thus `namespace(fullPath: <project path>) { workItem(iid: ...) }` works for this
+pair on **GitLab 19.5.3**. No alternative query shape or product-code follow-up is
+needed. `tests/test_discovery.py::test_gitlab_19_5_3_recorded_hierarchy_responses`
+replays both recorded envelopes through the existing adapter, verifying fixture
+compatibility. TASK-004's targeted validation is complete; reproduction steps
+and the human-authorized scope are in `LIVE_TESTING.md`. This evidence does not
+claim compatibility with every server version or work-item type.
 
 Exact limitations:
 

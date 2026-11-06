@@ -133,13 +133,10 @@ class GitRunner:
                 stdout = stdout.replace(token, "[REDACTED]")
                 stderr = stderr.replace(token, "[REDACTED]")
             if process.returncode != 0:
-                operation = (
-                    args[2]
-                    if len(args) > 2 and args[0] == "-C"
-                    else args[0]
-                    if args
-                    else "command"
-                )
+                operation_args = args[2:] if args[:1] == ["-C"] else args
+                while operation_args[:1] == ["-c"]:
+                    operation_args = operation_args[2:]
+                operation = operation_args[0] if operation_args else "command"
                 message = f"Git operation failed ({operation})"
                 if resource_key:
                     message = f"{resource_key}: {message}"
@@ -208,6 +205,7 @@ class GitResourceSynchronizer:
         resource_key: str,
         *,
         token: str | None = None,
+        lfs: bool = False,
     ) -> GitResourceResult:
         remote = credential_free_remote(remote)
         if token and token in remote:
@@ -232,6 +230,8 @@ class GitResourceSynchronizer:
                 raise PathSafetyError("destination collides with unmanaged resource")
             if marker.read_text(encoding="utf-8") != marker_value:
                 raise PathSafetyError("managed resource identity does not match")
+            if lfs:
+                self._configure_lfs(destination, resource_key)
             status = self.runner.run(
                 [
                     "-C",
@@ -265,12 +265,16 @@ class GitResourceSynchronizer:
                 safe_directory=destination,
             )
             revision = self._revision(destination, resource_key)
+            if lfs:
+                self._fetch_lfs(destination, revision, resource_key, token)
             current = self.runner.run(
                 ["-C", str(destination), "rev-parse", "--verify", "HEAD"],
                 resource_key=resource_key,
                 safe_directory=destination,
             )
             if current.stdout.strip() == revision:
+                if lfs:
+                    self._checkout_lfs(destination, resource_key)
                 return GitResourceResult("ok", revision, branch)
             try:
                 self.runner.run(
@@ -285,6 +289,8 @@ class GitResourceSynchronizer:
                     resource_key=resource_key,
                     safe_directory=destination,
                 )
+                if lfs:
+                    self._checkout_lfs(destination, resource_key)
             except GitSyncError as exc:
                 raise GitSyncError(
                     f"{resource_key}: Git checkout failed; resource may be "
@@ -317,11 +323,16 @@ class GitResourceSynchronizer:
                 safe_directory=staging,
             )
             revision = self._revision(staging, resource_key)
+            if lfs:
+                self._configure_lfs(staging, resource_key)
+                self._fetch_lfs(staging, revision, resource_key, token)
             self.runner.run(
                 ["-C", str(staging), "checkout", "--detach", revision],
                 resource_key=resource_key,
                 safe_directory=staging,
             )
+            if lfs:
+                self._checkout_lfs(staging, resource_key)
             marker = staging / ".git" / "gitlab-groupsync"
             with marker.open("w", encoding="utf-8") as output:
                 output.write(marker_value)
@@ -336,6 +347,78 @@ class GitResourceSynchronizer:
             return GitResourceResult("ok", revision, branch)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+
+    def _configure_lfs(self, checkout: Path, resource_key: str) -> None:
+        """Install only repository-local filters, without adding hooks."""
+        self.runner.run(
+            [
+                "-C",
+                str(checkout),
+                "lfs",
+                "install",
+                "--local",
+                "--skip-smudge",
+                "--skip-repo",
+            ],
+            resource_key=resource_key,
+            safe_directory=checkout,
+        )
+
+    def _fetch_lfs(
+        self, checkout: Path, revision: str, resource_key: str, token: str | None
+    ) -> None:
+        """Fetch just the target commit, regardless of user recent/path settings."""
+        self.runner.run(
+            [
+                "-C",
+                str(checkout),
+                "-c",
+                "lfs.fetchrecentalways=false",
+                "lfs",
+                "fetch",
+                "--include=",
+                "--exclude=",
+                "origin",
+                revision,
+            ],
+            token=token,
+            resource_key=resource_key,
+            safe_directory=checkout,
+        )
+
+    def _checkout_lfs(self, checkout: Path, resource_key: str) -> None:
+        self.runner.run(
+            [
+                "-C",
+                str(checkout),
+                "-c",
+                "lfs.fetchinclude=",
+                "-c",
+                "lfs.fetchexclude=",
+                "lfs",
+                "checkout",
+            ],
+            resource_key=resource_key,
+            safe_directory=checkout,
+        )
+        # LFS checkout can exit successfully while skipping unavailable files.
+        files = self.runner.run(
+            [
+                "-C",
+                str(checkout),
+                "lfs",
+                "ls-files",
+                "--long",
+                "--include=",
+                "--exclude=",
+            ],
+            resource_key=resource_key,
+            safe_directory=checkout,
+        )
+        if any(line[64:67] == " - " for line in files.stdout.splitlines()):
+            raise GitSyncError(
+                f"{resource_key}: LFS checkout left unmaterialized files"
+            )
 
     def remote_head(
         self,

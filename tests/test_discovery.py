@@ -91,6 +91,16 @@ class _GitLabHandler(BaseHTTPRequestHandler):
                 ]
                 if query["with_shared"] == ["true"]:
                     body.append({"id": 30, "path_with_namespace": "external/shared"})
+        elif parsed.path in {
+            "/gitlab/api/v4/projects/10",
+            "/gitlab/api/v4/projects/20",
+        }:
+            project_id = int(parsed.path.rsplit("/", 1)[1])
+            body = {
+                "id": project_id,
+                "path_with_namespace": "root/team/app",
+                "statistics": {"lfs_objects_size": 128 if project_id == 10 else 0},
+            }
         else:
             status, body = 404, {"message": "missing"}
         encoded = json.dumps(body).encode()
@@ -189,6 +199,8 @@ def test_cli_discovery_uses_real_http_pagination_and_refreshes(tmp_path: Path) -
     assert persisted["inventory"]["groups"][0]["wiki"] is True
     assert persisted["inventory"]["projects"][0]["repository"] is True
     assert persisted["inventory"]["projects"][1]["repository"] is False
+    assert persisted["inventory"]["projects"][0]["lfs"] is False
+    assert "lfs" not in persisted["inventory"]["projects"][1]
     assert "private-value" not in path.read_text()
     assert all(request[2] == "private-value" for request in _GitLabHandler.requests)
     project_queries = [
@@ -199,6 +211,11 @@ def test_cli_discovery_uses_real_http_pagination_and_refreshes(tmp_path: Path) -
     assert all(query["include_subgroups"] == ["true"] for query in project_queries)
     assert all(query["with_shared"] == ["false"] for query in project_queries)
     assert all("archived" not in query for query in project_queries)
+    assert all(
+        query["statistics"] == ["true"]
+        for endpoint, query, _ in _GitLabHandler.requests
+        if "/projects/" in endpoint
+    )
 
 
 def test_shared_inclusion_and_archived_exclusion_parameters() -> None:
@@ -454,6 +471,40 @@ def test_work_item_rest_endpoints_and_graphql_hierarchy_pagination() -> None:
         query["scope"] == "all" and query["state"] == "all" for query in issue_queries
     )
     assert all(query["updated_after"] == "then" for query in issue_queries)
+    client.__exit__()
+
+
+def test_gitlab_19_5_3_recorded_hierarchy_responses() -> None:
+    """Replay human-captured live envelopes, including empty non-hierarchy widgets."""
+    evidence = Path(__file__).parent.parent / "docs/live-evidence/gitlab-19.5.3"
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        variables = json.loads(request.content)["variables"]
+        assert variables["path"] == "zero-iot/lambda_api"
+        assert variables["after"] is None
+        iid = variables["iid"]
+        calls.append(iid)
+        return httpx.Response(
+            200,
+            content=(evidence / f"hierarchy-{iid}-response.json").read_bytes(),
+            headers={"Content-Type": "application/json"},
+        )
+
+    client = _mock_client(handler)
+    parent = client.work_item_hierarchy("zero-iot/lambda_api", 15)
+    child = client.work_item_hierarchy("zero-iot/lambda_api", 16)
+    assert parent.parent is None
+    assert len(parent.children) == 1
+    assert parent.children[0]["id"] == "gid://gitlab/WorkItem/4013"
+    assert parent.children[0]["iid"] == "16"
+    assert child.parent is not None
+    assert child.parent["id"] == "gid://gitlab/WorkItem/3816"
+    assert child.parent["iid"] == "15"
+    assert child.children == ()
+    assert parent.limitations == child.limitations == ()
+    # A non-null endCursor with hasNextPage:false must not trigger another request.
+    assert calls == ["15", "16"]
     client.__exit__()
 
 
@@ -1011,8 +1062,14 @@ def test_cli_replace_root_option_and_refresh_error(
     monkeypatch.setattr(cli, "GitLabClient", FakeClient)
     monkeypatch.setattr(cli, "discover_inventory", lambda *args, **kwargs: _inventory())
 
-    def capture(path: str, inventory: Inventory, *, replace_root: bool) -> None:
-        del path, inventory
+    def capture(
+        path: str,
+        inventory: Inventory,
+        *,
+        replace_root: bool,
+        lfs_objects: dict[int, bool | None],
+    ) -> None:
+        del path, inventory, lfs_objects
         observed["replace_root"] = replace_root
         raise DiscoveryError("safe refresh failure")
 

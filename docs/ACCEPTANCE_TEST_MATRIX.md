@@ -1,9 +1,12 @@
 # Specification Acceptance Test Matrix
 
 This audit maps every numbered scenario in section 11 of
-`specs/gitlab_reference_sync_spec.md` to automated evidence. All GitLab API
-evidence is fixture-only and not live-tested; real Git behavior uses temporary
-local repositories.
+`specs/gitlab_reference_sync_spec.md` to automated evidence. Automated tests use
+API fixtures and temporary local Git repositories. Human-confirmed operational
+and targeted hierarchy-query evidence from 2026-11-05 against GitLab 19.5.3 is
+recorded in `CAPABILITIES.md`; the captured hierarchy envelopes are replayed by
+`tests/test_discovery.py::test_gitlab_19_5_3_recorded_hierarchy_responses`.
+Licensed group-wiki coverage remains fixture-only and not live-tested.
 
 | # | Automated evidence |
 | --- | --- |
@@ -27,3 +30,13 @@ local repositories.
 The release gate additionally runs the configured 100% coverage suite, Ruff
 lint/format checks, mypy, tox, lock validation, package build, clean wheel
 installation, installed `gl-groupsync --help`, and package-data inspection.
+
+## Optional Git LFS
+
+`tests/test_lfs.py` covers statistics evidence and unknown/malformed responses,
+conditional fields, stable-ID defaults and preservation, config compatibility,
+atomic discovery failures, real exact-commit hydration, unchanged-revision
+enablement, incremental updates, stopping downloads, local conflicts, missing
+objects and retry, and missing executable behavior. Selected-only executable
+checks are in `tests/test_diagnostics.py`; repository-only selection and retained
+success/failure isolation are in `tests/test_orchestrator.py`.

@@ -137,7 +137,10 @@ def _validate_semantics(config: Mapping[str, Any]) -> None:
         projects,
         "inventory.projects",
         {"id", "full_path", "repository", "wiki", "work_items"},
+        optional_keys=frozenset({"lfs"}),
     )
+    if any(item.get("lfs", False) and not item["repository"] for item in projects):
+        raise ConfigurationError("inventory project lfs:true requires repository:true")
     root_matches = [item for item in groups if item["id"] == root["id"]]
     if len(root_matches) != 1 or root_matches[0]["full_path"] != root["full_path"]:
         raise ConfigurationError(
@@ -153,12 +156,16 @@ def _validate_semantics(config: Mapping[str, Any]) -> None:
 
 
 def _validate_inventory_list(
-    entries: list[Mapping[str, Any]], label: str, allowed_keys: set[str]
+    entries: list[Mapping[str, Any]],
+    label: str,
+    allowed_keys: set[str],
+    *,
+    optional_keys: frozenset[str] = frozenset(),
 ) -> None:
     ids: set[int] = set()
     paths: set[str] = set()
     for entry in entries:
-        _validate_inventory_entry(entry, label, allowed_keys)
+        _validate_inventory_entry(entry, label, allowed_keys, optional_keys)
         if entry["id"] in ids:
             raise ConfigurationError(f"{label} contains a duplicate ID")
         if entry["full_path"] in paths:
@@ -168,9 +175,12 @@ def _validate_inventory_list(
 
 
 def _validate_inventory_entry(
-    entry: Mapping[str, Any], label: str, allowed_keys: set[str]
+    entry: Mapping[str, Any],
+    label: str,
+    allowed_keys: set[str],
+    optional_keys: frozenset[str] = frozenset(),
 ) -> None:
-    if set(entry) != allowed_keys:
+    if set(entry) - optional_keys != allowed_keys:
         raise ConfigurationError(f"{label} entry has missing or unknown settings")
     if isinstance(entry["id"], bool) or entry["id"] < 1:
         raise ConfigurationError(f"{label} IDs must be positive")

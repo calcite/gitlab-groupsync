@@ -35,9 +35,12 @@ files while excluding Git internals:
 rg --hidden --no-ignore -g '!.git' 'pattern' content/
 ```
 
-This searches materialized text and filenames. It does not extract text from
-binary documents, Git LFS payloads, or attachments. Attachment links are
-preserved where available, but attachment payloads are not downloaded.
+This searches materialized text and filenames. Project Git LFS files are
+downloaded only when that project's optional LFS selection is enabled; otherwise
+new checkouts contain pointer files. Only the current default-branch commit's
+LFS files are downloaded, not all historical objects. This does not extract text
+from binary documents or attachments. Attachment links are preserved where
+available, but attachment payloads are not downloaded.
 
 ## Consistency
 

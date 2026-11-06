@@ -131,6 +131,7 @@ class FakeGit:
     def __init__(self, failures: dict[str, Exception] | None = None) -> None:
         self.failures = failures or {}
         self.calls: list[tuple[str, str | None]] = []
+        self.lfs_calls: list[tuple[str, bool]] = []
 
     def remote_head(
         self,
@@ -154,14 +155,48 @@ class FakeGit:
         resource_key: str,
         *,
         token: str | None = None,
+        lfs: bool = False,
     ) -> GitResourceResult:
         del remote, resource_key
         kind = destination.name
+        self.lfs_calls.append((kind, lfs))
         self.calls.append((kind, token))
         failure = self.failures.get(kind)
         if failure:
             raise failure
         return GitResourceResult("ok", f"{kind}-revision", branch)
+
+
+def test_lfs_selection_is_repository_only_and_failure_retains_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "corpus"
+    selection = _selection(10, "root/app")
+    selection["lfs"] = True
+    config = _config(destination, [selection])
+    monkeypatch.setattr(
+        orchestrator, "discover_inventory", lambda *a, **k: _inventory((10, "root/app"))
+    )
+    client = FakeClient({10: _details(10, "root/app")}, {10: WikiProbe(200, 1)})
+    git = FakeGit()
+    sync = SyncOrchestrator(
+        config,
+        "token",
+        client_factory=lambda *a, **k: client,
+        git=git,  # type: ignore[arg-type]
+    )
+    assert sync.run() == 0
+    assert git.lfs_calls == [("repository", True), ("wiki", False)]
+    with StateStore(destination / ".sync/state.sqlite3", read_only=True) as store:
+        previous = store.get_resource("project", 10, "repository")
+    git.failures["repository"] = GitSyncError("LFS object unavailable")
+    assert sync.run() == 1
+    with StateStore(destination / ".sync/state.sqlite3", read_only=True) as store:
+        repository = store.get_resource("project", 10, "repository")
+        assert repository["status"] == "error"
+        assert repository["revision"] == previous["revision"]
+        assert repository["last_success_at"] == previous["last_success_at"]
+        assert store.get_resource("project", 10, "wiki")["status"] == "ok"
 
 
 def _details(
@@ -246,8 +281,9 @@ def test_git_failure_persists_actionable_redacted_error(
             resource_key: str,
             *,
             token: str | None = None,
+            lfs: bool = False,
         ) -> GitResourceResult:
-            del remote, branch
+            del remote, branch, lfs
             GitRunner(2, executable=str(failed)).run(
                 ["-C", str(checkout), "fetch"],
                 token=token,

@@ -119,6 +119,21 @@ def run_doctor(
         git_ok, detail = False, "Git executable/version unavailable"
     checks.append(DiagnosticCheck("git", git_ok, detail))
 
+    if any(project.get("lfs", False) for project in config["inventory"]["projects"]):
+        try:
+            result = git_runner(
+                ["git", "lfs", "version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            lfs_ok = result.returncode == 0 and result.stdout.startswith("git-lfs/")
+            detail = result.stdout.strip() if lfs_ok else "Git LFS unavailable"
+        except (OSError, subprocess.SubprocessError):
+            lfs_ok, detail = False, "Git LFS unavailable"
+        checks.append(DiagnosticCheck("git_lfs", lfs_ok, detail))
+
     gitlab = config["gitlab"]
     if gitlab["git_transport"] == "ssh":
         try:

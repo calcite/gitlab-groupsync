@@ -69,6 +69,7 @@ class LockClickError(click.ClickException):
 
 
 @click.group()
+@click.version_option(package_name="gitlab-groupsync", prog_name="gl-groupsync")
 def main() -> None:
     """Maintain a selected local reference copy of a GitLab group."""
 
@@ -113,7 +114,19 @@ def discover(ctx: click.Context, config: str, replace_root: bool) -> None:
                 include_shared=sync_config["include_shared_projects"],
                 include_archived=sync_config["include_archived_projects"],
             )
-        refresh_catalog(config, inventory, replace_root=replace_root)
+            lfs_objects = {}
+            for project in inventory.projects:
+                lfs_objects[project.id] = client.project_lfs_objects(project.id)
+                if lfs_objects[project.id] is None:
+                    click.echo(
+                        f"LFS availability unknown for {project.full_path} "
+                        "(project statistics unavailable); preserving any existing "
+                        "LFS selection.",
+                        err=True,
+                    )
+        refresh_catalog(
+            config, inventory, replace_root=replace_root, lfs_objects=lfs_objects
+        )
     except DiscoveryError as exc:
         raise DiscoveryClickError(f"Discovery failed: {exc}") from exc
     click.echo(

@@ -1,19 +1,24 @@
 # GitLab Groupsync
 
+Current release: **0.2.0**. Check an installation with `gl-groupsync --version`.
+
 `gl-groupsync` maintains a selected, read-only local reference corpus for one
 GitLab group and its descendants. It synchronizes project default branches,
 project wikis, issues/tasks with conversations, and independently selected group
 wikis. GitLab remains authoritative; this tool never pushes or edits GitLab.
 
-The current compatibility evidence is fixture-only and not live-tested. No
-disposable GitLab instance or version was provided for live testing. See
-[`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) for exact coverage and limits.
+The human confirmed live synchronization, including LFS downloads, against
+GitLab **19.5.3** on 2026-11-05. A human-run read-only query also verified
+parent/child hierarchy in both directions. Licensed group wikis are
+not live-tested. See [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) for evidence and
+limits.
 
 ## Requirements And Installation
 
 - Python 3.13
 - Linux
 - Git on `PATH`
+- Git LFS (`git-lfs`) when LFS downloads are selected; also required for the development test suite
 - [`uv`](https://docs.astral.sh/uv/)
 
 Install the command in an isolated tool environment:
@@ -95,6 +100,41 @@ gl-groupsync sync --config /etc/gl-groupsync/config.yaml --sync--workers 8
 
 Overrides affect that invocation only. `discover` reads them for its request but
 does not write them into YAML.
+
+## Optional Git LFS Files
+
+`discover` adds `lfs: false` only to projects whose GitLab statistics report stored
+LFS objects. To download those files, install Git LFS and enable both flags:
+
+```yaml
+repository: true
+lfs: true
+```
+
+Omitting `lfs` means `false`, so existing configurations need no changes. GitLab's
+`lfs_enabled` setting alone does not prove that a project contains objects.
+Discovery requests `GET /projects/:id?statistics=true`; these statistics require
+at least the Reporter role. If statistics are unavailable, discovery reports LFS
+availability as unknown, preserves an existing LFS selection, and adds no new
+option. Confirmed zero storage removes the option. A failed request leaves the
+configuration unchanged. Rerun discovery to refresh availability.
+
+Enabled projects download and materialize only LFS files referenced by the exact
+current default-branch commit, including when enabling LFS on an unchanged
+checkout. Project-wide storage statistics can include historical objects, so an
+eligible project may have no LFS files at its current commit. Other branches and
+historical LFS payloads are not downloaded. Automatic smudging remains disabled;
+the synchronizer explicitly fetches objects and checks out their content.
+
+Missing objects or Git LFS failures fail that repository resource; other resources
+continue. First imports are published only after hydration succeeds. Downloads
+for an existing checkout complete before switching its Git revision. Turning
+`lfs` off stops downloads and retains cached objects; existing hydrated files may
+remain until changed by a subsequent checkout. Keep Git LFS installed for
+previously hydrated checkouts so Git can recognize their content as clean.
+`doctor` checks Git LFS availability only when `lfs: true` is selected.
+
+See [ADR 0003](docs/adr/0003-optional-project-lfs.md) for the selection contract.
 
 ## Credentials, HTTPS, SSH, And CAs
 
@@ -271,6 +311,17 @@ GitLab.
   read-repository access.
 - **HTTPS failure:** verify API plus repository scopes; persisted remotes must not
   contain credentials.
+
+## Releases And PyPI
+
+GitHub Actions tests and builds every branch push and pull request. Pushing a
+matching version tag, such as `v0.2.0`, runs the same checks and publishes the
+tested wheel and source distribution to PyPI using Trusted Publishing.
+
+The repository owner must first configure the `pypi` GitHub environment and PyPI
+Trusted Publisher for `JNevrly/gitlab_groupsync`, workflow `release.yml`. No PyPI
+API token is needed. See [`docs/RELEASING.md`](docs/RELEASING.md) for the exact
+one-time setup, local checks and tag procedure.
 
 ## Development And Verification
 

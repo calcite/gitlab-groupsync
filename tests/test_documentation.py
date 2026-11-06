@@ -36,6 +36,7 @@ def test_search_guide_is_deterministic_complete_and_noop(tmp_path: Path) -> None
         "read-only bind mount",
         "rg --hidden --no-ignore -g '!.git' 'pattern' content/",
         "binary documents",
+        "optional LFS selection",
         "attachments",
         "not atomic snapshots",
         "atomic per item",
@@ -111,6 +112,7 @@ def test_config_scheduler_and_live_test_examples_are_safe_and_complete() -> None
         "id": 1000,
         "full_path": "engineering/platform/reference-app",
         "repository": True,
+        "lfs": False,
         "wiki": True,
         "work_items": True,
     }

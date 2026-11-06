@@ -98,3 +98,6 @@ alabaster
 
 .vscode/
 .idea/
+
+# Miscellaneous
+temp/

@@ -1,6 +1,6 @@
 [project]
 name = "gitlab_groupsync"
-version = "0.1.0"
+version = "0.2.0"
 description = "Synchronize selected GitLab group repositories, wikis, and work items for offline reference search."
 authors = [
     { name = "Josef Nevrly", email = "josef.nevrly@gmail.com" }
@@ -72,3 +72,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["gitlab_groupsync"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/gitlab_groupsync",
+    "/pyproject.toml",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]

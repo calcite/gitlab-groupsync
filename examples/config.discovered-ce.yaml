@@ -33,6 +33,7 @@ inventory:
     - id: 1000
       full_path: engineering/platform/reference-app
       repository: true
+      lfs: false # Offered because this fictional project has stored LFS objects.
       wiki: true
       work_items: true
     - id: 1010

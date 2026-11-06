@@ -83,5 +83,6 @@ inventory:
           id: {type: integer, required: true}
           full_path: {type: string, required: true, empty: false}
           repository: {type: boolean, required: true}
+          lfs: {type: boolean, required: false}
           wiki: {type: boolean, required: true}
           work_items: {type: boolean, required: true}

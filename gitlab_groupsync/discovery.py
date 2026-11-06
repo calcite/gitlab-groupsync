@@ -17,6 +17,7 @@ def refresh_catalog(
     inventory: Inventory,
     *,
     replace_root: bool = False,
+    lfs_objects: Mapping[int, bool | None] | None = None,
 ) -> None:
     """Merge a complete inventory into the persisted YAML and atomically replace it."""
     if not inventory.complete:
@@ -48,7 +49,9 @@ def refresh_catalog(
             "discovered root group ID differs; rerun with --replace-root to approve"
         )
 
-    document["inventory"] = _merged_inventory(old_inventory, inventory)
+    document["inventory"] = _merged_inventory(
+        old_inventory, inventory, lfs_objects or {}
+    )
     _atomic_dump(path, document, yaml)
 
 
@@ -70,7 +73,9 @@ def inventory_from_config(config: Mapping[str, Any]) -> Inventory | None:
     )
 
 
-def _merged_inventory(old: Mapping[str, Any], inventory: Inventory) -> dict[str, Any]:
+def _merged_inventory(
+    old: Mapping[str, Any], inventory: Inventory, lfs_objects: Mapping[int, bool | None]
+) -> dict[str, Any]:
     old_groups = {
         item["id"]: item
         for item in old.get("groups", [])
@@ -89,7 +94,7 @@ def _merged_inventory(old: Mapping[str, Any], inventory: Inventory) -> dict[str,
         }
         for item in sorted(inventory.groups)
     ]
-    projects = [
+    projects: list[dict[str, Any]] = [
         {
             "id": item.id,
             "full_path": item.full_path,
@@ -99,6 +104,11 @@ def _merged_inventory(old: Mapping[str, Any], inventory: Inventory) -> dict[str,
         }
         for item in sorted(inventory.projects)
     ]
+    for project in projects:
+        previous = old_projects.get(project["id"], {})
+        evidence = lfs_objects.get(project["id"])
+        if evidence is True or (evidence is None and "lfs" in previous):
+            project["lfs"] = bool(previous.get("lfs", False))
     return {
         "root_group": {
             "id": inventory.root_group.id,
