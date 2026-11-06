@@ -1,7 +1,8 @@
 # ADR 0004: Tag-triggered GitHub PyPI Trusted Publishing
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-05
+- Accepted: 2026-11-06, by explicit human approval with closure of TASK-007.
 
 ## Context
 

@@ -1,11 +1,11 @@
 ---
 id: TASK-007
 title: Prepare v0.2.0 and GitHub Actions PyPI publishing
-status: Review
+status: Done
 assignee:
   - '@opencode'
 created_date: '2026-11-05 22:03'
-updated_date: '2026-11-06 08:38'
+updated_date: '2026-11-06 09:34'
 labels: []
 dependencies: []
 references:
@@ -18,6 +18,9 @@ references:
   - scripts/smoke_distribution.py
   - docs/RELEASING.md
   - docs/adr/0004-github-pypi-trusted-publishing.md
+  - 'https://github.com/calcite/gitlab-groupsync/actions/runs/42193622682'
+  - 'https://github.com/calcite/gitlab-groupsync/actions/runs/42193630840'
+  - 'https://pypi.org/project/gitlab-groupsync/0.2.0/'
 priority: high
 type: chore
 ordinal: 23000
@@ -51,15 +54,17 @@ The current project URLs and configured origin identify calcite/gitlab-groupsync
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Release preparation: package/runtime/lock versions are 0.2.0, CLI --version is implemented, and the dated changelog describes LFS, live GitLab 19.5.3/hierarchy validation and publishing. ci.yml runs locked tests/static/actionlint/build/metadata/isolated-install checks; release.yml handles v* tags and publishes the tested artifact through the pypi environment with job-scoped id-token:write. uv 0.12.17, Twine 7.0.0 and SHA-pinned actions are used. Prior root-only sandbox verification passed 262 tests at 100% coverage, version/tag rejection cases, actionlint, archive membership checks and isolated wheel/sdist installation.
+Current release state: v0.2.0 has been published successfully. Version metadata, runtime, lockfile, changelog and installed CLI identify 0.2.0. GitHub repository/publisher identity is calcite/gitlab-groupsync, workflow release.yml, environment pypi. The owner configured the external setup and pushed the tag; public workflow/PyPI evidence now supersedes earlier notes saying the corrected commit, OIDC upload or publisher setup were unverified.
 
-GitHub regression reported 2026-11-06: the command uv run --frozen pytest --cov=gitlab_groupsync --cov-report=term-missing tests/ failed in test_sync_setup_and_partial_exit_codes. The test used the default /srv/gitlab-reference destination; run_sync acquires a destination lock before rejecting missing inventory. Root could create this lock locally, but an unprivileged GitHub runner could not, so the expected missing-inventory exit-2 branch never ran and subsequent partial-exit assertions were skipped, reducing coverage to 99.92%. Corrected that existing test to pass --storage--destination pointing to tmp_path/reference for both invocations. It still exercises the real missing-inventory error and the injected partial result. No production behavior, coverage threshold, CI user privileges or skip rules were changed.
+Verified GitHub evidence on 2026-11-06: branch CI run 42193622682 completed successfully for main commit 5a541fa67db1230da06369e5df38b842409693e0. Release workflow run 42193630840 completed successfully for v0.2.0 at that same commit. Its build job completed every required step, including locked environment, tag/metadata checks, static/workflow checks, required coverage, distributions, strict metadata checks, both isolated installation smoke checks and artifact upload. Its separate publishing job successfully downloaded the tested artifact and completed Publish with PyPI Trusted Publishing. URLs are attached as references. gh is unavailable, so this read-only verification used the public GitHub API.
 
-Non-root verification: used setpriv with real/effective UID/GID 1000 and cleared supplementary groups, a newly created UID-1000-owned scratch HOME/TMPDIR, an external COVERAGE_FILE, disabled pytest cache/bytecode writes, and the locked .venv Python. Full tests ran with --cov=gitlab_groupsync --cov-config=pyproject.toml --cov-report=term-missing --cov-fail-under=100 tests/. Result: 261 passed, 1 expected root-only ownership-test skip, 100.00% package statement coverage, including all CLI lines. The focused failing test also passes. Ruff lint/format, mypy, 4 documentation tests and git diff --check pass. Version check v0.2.0 passes; rebuilt wheel/sdist both pass strict Twine validation and isolated installed-distribution smoke tests.
+Verified PyPI evidence: https://pypi.org/pypi/gitlab-groupsync/0.2.0/json lists version 0.2.0, unyanked, with both artifacts. Wheel gitlab_groupsync-0.2.0-py3-none-any.whl uploaded 2026-11-06T09:16:29.040512Z, SHA256 8464479b5cb3fb630fcb86d3f4ee0bb0dc3950b12cd66056216a4faf1218976e. Source gitlab_groupsync-0.2.0.tar.gz uploaded 2026-11-06T09:16:30.667808Z, SHA256 f02b7aa7ae479efc243ef89d3a3579ecfbb5260a9bc98e7d7022e3d85cbeeef8. Project URLs point to the configured calcite repository. An isolated install directly from the public index passed: uv run --isolated --no-project --with gitlab-groupsync==0.2.0 python scripts/smoke_distribution.py 0.2.0. That verifies installed metadata/runtime version, module provenance, CLI version/help, bundled default configuration and template generation. docs/RELEASING.md now records this successful publication and links.
 
-Repository identity: origin now points to git@github.com:calcite/gitlab-groupsync.git and pyproject.toml URLs already match. Updated README, docs/RELEASING.md and ADR 0004 to use owner calcite and repository gitlab-groupsync, replacing scaffold-derived JNevrly/gitlab_groupsync instructions. Current PyPI publisher fields: project gitlab-groupsync, owner calcite, repository gitlab-groupsync, workflow release.yml, environment pypi. No publisher registration or configuration was changed remotely.
+CI regression history: the setup/partial-exit test originally used /srv/gitlab-reference. Root sandbox runs masked the unwritable destination on GitHub, where lock creation precedes inventory validation. Fixed the test to pass a pytest tmp_path destination, preserving the intended real missing-inventory exit 2 and injected partial exit 1 without production changes, sudo or coverage relaxation. The full suite passed under UID/GID 1000 with cleared supplementary groups: 261 passed, 1 expected root-only ownership-test skip, 100.00% coverage. Ruff lint/format, mypy, documentation tests, version/build/Twine/diff checks and isolated wheel/sdist installs also passed locally; remote CI has now passed too.
 
-Known constraints: Twine 6.2 rejects current Core Metadata 2.5, hence Twine 7; uv isolated package paths use overlays/cache locations, so smoke provenance checks installed metadata rather than sys.prefix containment; Hatchling includes .gitignore/generated metadata in the allowlisted sdist. ADR 0004 remains Proposed. The corrected commit has not yet run on GitHub; push it for a fresh CI run. Actual OIDC upload and external publisher/environment setup remain owner-managed. No additional task or ADR was created.
+Release tooling uses shared ci.yml and tag-triggered release.yml, job-isolated publishing permissions, SHA-pinned actions, uv 0.12.17, Twine 7.0.0 and tested-artifact transfer without rebuilding. Twine 6.2 cannot read current Core Metadata 2.5; uv overlay/cache installs require module provenance checking via installed metadata rather than sys.prefix containment; Hatchling includes .gitignore/generated metadata in the allowlisted sdist. These remain useful maintenance constraints. ADR 0004 is still Proposed pending human review. No remaining release/publishing failure or new follow-up task is identified. TASK-007 remains in Review awaiting explicit human acceptance.
+
+Human acceptance checkpoint, 2026-11-06: explicitly authorized task closure and acceptance of ADR 0004. Updated docs/adr/0004-github-pypi-trusted-publishing.md to Accepted with the acceptance date. This supersedes all earlier references to Proposed ADR status or pending human acceptance. Current state: release and publishing verified, ADR accepted, task closed as Done. No remaining work or follow-up task.
 <!-- SECTION:NOTES:END -->
 
 ## Comments
@@ -88,14 +93,26 @@ created: 2026-11-06 08:38
 ---
 Corrected the test destination and reproduced the full suite under UID 1000 with 261 passed, 1 expected root-only skip and 100% coverage. Also aligned publisher docs with the now-configured calcite/gitlab-groupsync origin. Returned to Review; push the corrected commit to trigger a fresh GitHub run.
 ---
+
+author: Human
+created: 2026-11-06 09:24
+---
+Reported that the CI build has completed.
+---
+
+author: Human
+created: 2026-11-06 09:34
+---
+Explicitly authorized closing TASK-007 and marking ADR 0004 as Accepted.
+---
 <!-- COMMENTS:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Prepared v0.2.0 versioning/changelog/CLI version and shared GitHub test/build plus tag-triggered PyPI Trusted Publishing, with metadata/tag guards, isolated publishing permissions and tested-artifact handoff. Release instructions and Proposed ADR 0004 now match the configured calcite/gitlab-groupsync repository.
+Released and verified v0.2.0 with consistent package/runtime/lock/CLI versions, updated changelog, reusable GitHub CI and tag-triggered PyPI Trusted Publishing. Publishing uses isolated OIDC permissions and the exact tested wheel/sdist artifacts. Fixed the non-root CI test destination regression and aligned publisher setup with calcite/gitlab-groupsync.
 
-Fixed the reported GitHub CI regression by giving test_sync_setup_and_partial_exit_codes a pytest-owned temporary destination instead of the production /srv default. Verified the entire suite as unprivileged UID 1000: 261 passed, 1 expected root-only skip, 100.00% package statement coverage. Ruff lint/format, mypy, documentation tests, version checks and diff checks pass; rebuilt wheel/sdist pass strict Twine and isolated installation checks. Coverage was not relaxed and tests do not need sudo.
+Verification: successful branch CI run 42193622682 and tagged release/publish run 42193630840 at commit 5a541fa67db1230da06369e5df38b842409693e0. PyPI independently lists both unyanked 0.2.0 distributions, and an isolated install from the public index passed the smoke test. Local non-root verification passed 261 tests with 1 expected skip and 100% package coverage, plus static/workflow checks, metadata/tag guards, builds, Twine and distribution installation checks. Release evidence is recorded in docs/RELEASING.md.
 
-Ready for review and a fresh GitHub run after committing/pushing the fix. The corrected commit has not been tested on GitHub yet and no remote publishing setup or PyPI upload was performed by the agent. Verify Trusted Publisher fields for owner calcite, repository gitlab-groupsync, release.yml, environment pypi before publication. No new follow-up task.
+The human explicitly accepted closure and ADR 0004 on 2026-11-06. ADR 0004 is now Accepted, TASK-007 is Done, and no implementation, publication or acceptance work remains. No follow-up task was created.
 <!-- SECTION:FINAL_SUMMARY:END -->

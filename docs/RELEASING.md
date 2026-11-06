@@ -126,3 +126,27 @@ created separately for release notes; it is not the publishing trigger.
 This preparation performs local builds and workflow validation. Creating the
 GitHub environment, registering the PyPI publisher, pushing the tag and observing
 the actual OIDC upload require the repository/package owner's configured access.
+
+## Verified v0.2.0 Publication (2026-11-06)
+
+The owner pushed `v0.2.0` at commit
+`5a541fa67db1230da06369e5df38b842409693e0`. The following runs completed
+successfully:
+
+- [Branch CI](https://github.com/calcite/gitlab-groupsync/actions/runs/42193622682).
+- [Tagged release and PyPI publication](https://github.com/calcite/gitlab-groupsync/actions/runs/42193630840),
+  including tests/coverage, metadata checks, isolated installation smoke tests,
+  artifact transfer and the Trusted Publishing upload.
+
+PyPI lists both `gitlab_groupsync-0.2.0-py3-none-any.whl` and
+`gitlab_groupsync-0.2.0.tar.gz`, uploaded on 2026-11-06 at approximately 09:16 UTC:
+<https://pypi.org/project/gitlab-groupsync/0.2.0/>.
+
+Installation directly from the public index also passed the release smoke check:
+
+```console
+uv run --isolated --no-project --with gitlab-groupsync==0.2.0 python scripts/smoke_distribution.py 0.2.0
+```
+
+This verifies the installed version, CLI version/help, bundled configuration,
+template generation and installed-module provenance for the published package.
