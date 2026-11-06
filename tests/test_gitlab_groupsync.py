@@ -123,15 +123,19 @@ def test_layering_and_config_reference_injection(
 
 
 def test_sync_setup_and_partial_exit_codes(
-    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    result = runner.invoke(cli.main, ["sync", "--full"], env={"GITLAB_TOKEN": "secret"})
+    # Lock acquisition precedes inventory validation, even for a setup failure.
+    command = ["sync", "--storage--destination", str(tmp_path / "reference")]
+    result = runner.invoke(
+        cli.main, [*command, "--full"], env={"GITLAB_TOKEN": "secret"}
+    )
     assert result.exit_code == 2
     assert "run discover" in result.output
     assert "secret" not in result.output
 
     monkeypatch.setattr(cli, "run_sync", lambda *args, **kwargs: 1)
-    result = runner.invoke(cli.main, ["sync"], env={"GITLAB_TOKEN": "secret"})
+    result = runner.invoke(cli.main, command, env={"GITLAB_TOKEN": "secret"})
     assert result.exit_code == 1
 
 

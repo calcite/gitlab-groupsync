@@ -319,7 +319,7 @@ matching version tag, such as `v0.2.0`, runs the same checks and publishes the
 tested wheel and source distribution to PyPI using Trusted Publishing.
 
 The repository owner must first configure the `pypi` GitHub environment and PyPI
-Trusted Publisher for `JNevrly/gitlab_groupsync`, workflow `release.yml`. No PyPI
+Trusted Publisher for `calcite/gitlab-groupsync`, workflow `release.yml`. No PyPI
 API token is needed. See [`docs/RELEASING.md`](docs/RELEASING.md) for the exact
 one-time setup, local checks and tag procedure.
 

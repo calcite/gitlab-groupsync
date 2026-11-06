@@ -7,7 +7,7 @@
   distribution version.
 - PyPI project: `gitlab-groupsync` (normalized from the metadata name
   `gitlab_groupsync`).
-- GitHub repository declared by the project: `JNevrly/gitlab_groupsync`.
+- GitHub repository declared by the project: `calcite/gitlab-groupsync`.
 - Release tag: `v` followed by the exact package version, initially `v0.2.0`.
 
 Version sources are `pyproject.toml`, `gitlab_groupsync/__init__.py` and the
@@ -24,8 +24,8 @@ Then configure a GitHub Trusted Publisher on PyPI using exactly:
 | PyPI field | Value |
 | --- | --- |
 | Project name (for a pending publisher) | `gitlab-groupsync` |
-| Owner | `JNevrly` |
-| Repository name | `gitlab_groupsync` |
+| Owner | `calcite` |
+| Repository name | `gitlab-groupsync` |
 | Workflow filename | `release.yml` |
 | Environment name | `pypi` |
 
@@ -35,10 +35,9 @@ Publishing settings. The project is created when that publisher successfully
 uploads its first distributions. The package was not listed by the PyPI JSON API
 when this release preparation was performed.
 
-These fields use the repository URLs already declared in `pyproject.toml`.
+These fields match the configured Git origin and the URLs in `pyproject.toml`.
 If the actual GitHub owner/repository changes, update the publisher identity and
-project URLs together. The local checkout currently has no Git remote configured;
-connect it to the intended GitHub repository before the first release push.
+project URLs together.
 
 No `PYPI_TOKEN`, password or other PyPI repository secret is used. PyPI
 authenticates the `publish` job through GitHub OIDC. Only that job has

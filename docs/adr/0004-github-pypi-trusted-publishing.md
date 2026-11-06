@@ -27,7 +27,7 @@ PyPA action with OIDC Trusted Publishing and its default attestations.
 
 The publishing job alone receives `id-token: write`. The build/test job receives
 read-only repository permissions, and ordinary CI cannot publish. Configure the
-PyPI publisher for `JNevrly/gitlab_groupsync`, workflow `release.yml`, environment
+PyPI publisher for `calcite/gitlab-groupsync`, workflow `release.yml`, environment
 `pypi`, matching the existing project identity. Action references are pinned to
 commit SHAs; uv and metadata-validator versions are also pinned.
 
