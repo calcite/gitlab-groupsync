@@ -25,8 +25,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/JNevrly/gitlab_groupsync"
-Repository = "https://github.com/JNevrly/gitlab_groupsync"
+Homepage = "https://github.com/calcite/gitlab-groupsync"
+Repository = "https://github.com/calcite/gitlab-groupsync"
 
 
 [project.scripts]
